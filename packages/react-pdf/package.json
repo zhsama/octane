@@ -1,0 +1,65 @@
+{
+  "name": "@octanejs/react-pdf",
+  "version": "0.1.0",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": [
+    "./dist/Page/AnnotationLayer.css",
+    "./dist/Page/TextLayer.css"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "description": "React-PDF 10 bindings for Octane, backed by PDF.js.",
+  "author": {
+    "name": "Dominic Gannaway",
+    "email": "dg@domgan.com"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/octanejs/octane.git",
+    "directory": "packages/react-pdf"
+  },
+  "main": "dist/server/index.js",
+  "module": "dist/client/index.js",
+  "types": "dist/types/index.d.ts",
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md",
+    "UPSTREAM.md"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/types/index.d.ts",
+      "browser": "./dist/client/index.js",
+      "node": "./dist/server/index.js",
+      "default": "./dist/client/index.js"
+    },
+    "./dist/Page/AnnotationLayer.css": "./dist/Page/AnnotationLayer.css",
+    "./dist/Page/TextLayer.css": "./dist/Page/TextLayer.css"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "prepack": "pnpm run build",
+    "test": "vitest run --root ../.. --project react-pdf --project react-pdf-ssr",
+    "typecheck": "tsrx-tsc --noEmit -p tsconfig.json && tsgo --noEmit -p typetests/tsconfig.json",
+    "types:check": "node scripts/generate-tsrx-types.mjs --check",
+    "types:generate": "node scripts/generate-tsrx-types.mjs"
+  },
+  "dependencies": {
+    "pdfjs-dist": "catalog:default"
+  },
+  "peerDependencies": {
+    "octane": "workspace:*"
+  },
+  "devDependencies": {
+    "esbuild": "catalog:default",
+    "octane": "workspace:*",
+    "prettier": "catalog:default",
+    "vitest": "catalog:default"
+  }
+}

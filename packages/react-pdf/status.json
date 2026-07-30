@@ -1,0 +1,18 @@
+{
+  "upstream": {
+    "package": "react-pdf",
+    "version": "10.4.1"
+  },
+  "surface": "Production Document, Page, Canvas, TextLayer, StructTree accessibility fallback, AnnotationLayer/forms, Thumbnail, Outline, PasswordResponses, LinkService, pdfjs, context hooks, render callbacks, refs, source/options handling, and the two CSS compatibility subpaths on pdfjs-dist 5.4.296.",
+  "divergences": [
+    "The server export uses an inert PDF.js namespace so importing the package cannot evaluate browser-only DOMMatrix code; PDF work starts after hydration.",
+    "customTextRenderer HTML is sanitized before insertion instead of being injected verbatim.",
+    "Host callbacks receive native DOM events, with no synthetic text onChange layer."
+  ],
+  "ssr": "Document and Page render deterministic no-data/loading/error shells without browser globals. Hydration adopts those hosts and starts source/document/page work after effects run.",
+  "verified": "2026-07-31",
+  "notes": [
+    "All source, document, page, canvas, text, structure-tree, annotation, outline, and destination async completions are instance-local and stale-guarded.",
+    "CSS compatibility entries vendor the focused upstream layer styles instead of duplicating PDF.js's full viewer stylesheet."
+  ]
+}

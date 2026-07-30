@@ -1930,6 +1930,56 @@ export default defineConfig({
 			},
 			{
 				test: {
+					name: 'react-pdf',
+					include: [
+						'packages/react-pdf/tests/**/*.test.ts',
+						'!packages/react-pdf/tests/ssr/**/*.test.ts',
+					],
+					environment: 'jsdom',
+					globals: false,
+					testTimeout: 20_000,
+				},
+				plugins: [octane()],
+				resolve: {
+					alias: [
+						{
+							find: /^@octanejs\/react-pdf$/,
+							replacement: resolve(import.meta.dirname, 'packages/react-pdf/src/index.tsrx'),
+						},
+						{
+							find: /^@octanejs\/react-pdf\/(.*)$/,
+							replacement: resolve(import.meta.dirname, 'packages/react-pdf/src') + '/$1',
+						},
+					],
+				},
+			},
+			{
+				test: {
+					name: 'react-pdf-ssr',
+					include: ['packages/react-pdf/tests/ssr/**/*.test.ts'],
+					environment: 'node',
+					globals: false,
+				},
+				plugins: [octane({ ssr: true })],
+				resolve: {
+					alias: [
+						{
+							find: /^octane$/,
+							replacement: resolve(import.meta.dirname, 'packages/octane/src/server/index.ts'),
+						},
+						{
+							find: /^pdfjs-dist$/,
+							replacement: resolve(import.meta.dirname, 'packages/react-pdf/src/pdfjs.server.ts'),
+						},
+						{
+							find: /^@octanejs\/react-pdf$/,
+							replacement: resolve(import.meta.dirname, 'packages/react-pdf/src/index.tsrx'),
+						},
+					],
+				},
+			},
+			{
+				test: {
 					name: 'dnd-kit',
 					include: [
 						'packages/dnd-kit/tests/conformance/**/*.test.ts',

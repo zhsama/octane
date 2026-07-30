@@ -3,7 +3,7 @@
 <!-- GENERATED FILE — do not edit. Edit packages/<name>/status.json and
      regenerate with `pnpm bindings:status`. -->
 
-The central status table for the 50 `@octanejs/*` framework bindings.
+The central status table for the 51 `@octanejs/*` framework bindings.
 Each row is sourced from that package's `packages/<name>/status.json` — the
 machine-readable status block maintained next to the code it describes — merged
 with the version in its `package.json`. CI runs `pnpm bindings:status:check`,
@@ -40,6 +40,7 @@ supported surface and known test coverage described for that package.
 | [`@octanejs/radix`](#octanejsradix) | `radix-ui@1.6.4` | Complete against the unified `radix-ui@1.6.4` component surface — all primitives (incl. Dialog, the Menu/DropdownMenu/ContextMenu family, Popover, Tooltip, Select, NavigationMenu, Toast, Menubar, Slider, the form controls, and OneTimePasswordField/PasswordToggleField) plus the composition/state/overlay foundations — verified by a differential suite (same fixtures through octane and the real radix-ui, byte-identical DOM). | `Slot`/`asChild` compose element descriptors (prop-position JSX, `createElement`, `.map()` returns), not children-position JSX; `forwardRef` becomes octane's ref-as-prop | SSR/hydration coverage for the overlay/portal components is still open (tracked in the migration plan). | 2026-07-21 |
 | [`@octanejs/rainbowkit`](#octanejsrainbowkit) | `@rainbow-me/rainbowkit@2.2.11` | Octane-native RainbowKitProvider, ConnectButton and ConnectButton.Custom, WalletButton, connect/account/chain modal hooks, connector selection, account/chain actions, native accessible dialogs, and light/dark/midnight themes. | IMPORTANT: upstream RainbowKit 2.2.11 declares wagmi ^2.9.0. This adapter intentionally consumes @octanejs/wagmi v3 and is not drop-in dependency or peer-range parity; The React DOM and vanilla-extract implementation is replaced by native Octane TSRX, DOM events, focus/scroll containment, and CSS custom properties; The wallet list merges optional configured descriptors with the enclosing Wagmi v3 connector list, deduplicated by canonical connector uid with explicit id/name fallback. Unavailable configured entries remain visible with a reason. RainbowKit wallet factories, vendor SDKs, and WalletConnect project configuration remain application-owned; Authentication, recent transactions, ENS/avatar resolution, localization, cool mode, account avatars/balances, chain icons, and pixel-identical upstream themes are unsupported and their upstream props are not accepted; rainbowTheme is an explicitly documented Octane-only purple/rounded preset; it is not an upstream RainbowKit export | The provider and controls emit deterministic disconnected markup without browser wallet access. Connector discovery and live Wagmi state become authoritative after hydration; no hydrated UI state authorizes wallet actions. | 2026-07-29 |
 | [`@octanejs/react-error-boundary`](#octanejsreact-error-boundary) | `react-error-boundary@6.1.2` | Complete against the published react-error-boundary 6.1.2 function/type surface adapted to Octane: ErrorBoundary, ErrorBoundaryContext, getErrorMessage, fallback variants, onError/onReset callbacks, resetKeys, useErrorBoundary (including error), withErrorBoundary, OnErrorCallback, and UseErrorBoundaryApi. | Component stack information is currently an empty string because Octane does not expose a public component-stack formatter; Event-handler and asynchronous errors must be passed to useErrorBoundary().showBoundary(), matching upstream's explicit forwarding requirement; Server rendering that must match upstream error propagation uses the explicit @octanejs/react-error-boundary/server entry | The explicit server entry renders children without a boundary so descendant errors propagate, matching react-error-boundary 6.1.2. | 2026-07-29 |
+| [`@octanejs/react-pdf`](#octanejsreact-pdf) | `react-pdf@10.4.1` | Production Document, Page, Canvas, TextLayer, StructTree accessibility fallback, AnnotationLayer/forms, Thumbnail, Outline, PasswordResponses, LinkService, pdfjs, context hooks, render callbacks, refs, source/options handling, and the two CSS compatibility subpaths on pdfjs-dist 5.4.296. | The server export uses an inert PDF.js namespace so importing the package cannot evaluate browser-only DOMMatrix code; PDF work starts after hydration; customTextRenderer HTML is sanitized before insertion instead of being injected verbatim; Host callbacks receive native DOM events, with no synthetic text onChange layer | Document and Page render deterministic no-data/loading/error shells without browser globals. Hydration adopts those hosts and starts source/document/page work after effects run. | 2026-07-31 |
 | [`@octanejs/recharts`](#octanejsrecharts) | `recharts@3.9.2` | Broad runtime support across cartesian, polar, hierarchical, tooltip, legend, responsive-container, shape, and chart-state surfaces. `Brush` and `Treemap` remain intentionally unsupported. | Chart events coordinate through octane's native delegated events rather than React's synthetic layer | Untested; text measurement (`getStringSize`) returns 0×0 under SSR. | 2026-07-29 |
 | [`@octanejs/redux`](#octanejsredux) | `react-redux@9.3.0` | The hooks + `Provider` surface of react-redux 9.3.0 (`useSelector`, `useDispatch`, `useStore`, and the custom-context factory variants) on octane's `useSyncExternalStore`; works with any Redux 5 / Redux Toolkit store. Export parity is pinned by test. | `connect()` (the legacy HOC surface) intentionally throws — the hooks API is the supported surface; Error messages are octane-branded | No SSR-specific surface; no dedicated SSR tests. | 2026-07-08 |
 | [`@octanejs/redux-toolkit`](#octanejsredux-toolkit) | `@reduxjs/toolkit@2.12.0` | Complete four-entry-point port: the framework-agnostic Toolkit and RTK Query core are re-exported verbatim; `/query/react` provides generated query, lazy-query, mutation, infinite-query, prefetch hooks and `ApiProvider`; `/react` provides the dynamic-middleware dispatch-hook integration. | The compatibility `/react` subpaths and `reactHooksModule` names are retained, but use octane and `@octanejs/redux` internally; `useDebugValue` is octane's no-op compatibility hook; observable query behavior is unchanged | Preloaded RTK Query state renders through the traditional @octanejs/redux Provider; effects and browser listeners remain client-only. Dedicated SSR and hydration tests are included. | 2026-07-13 |
@@ -461,6 +462,25 @@ Known divergences:
 SSR / hydration: The explicit server entry renders children without a boundary so descendant errors propagate, matching react-error-boundary 6.1.2.
 
 Scope/evidence last checked: 2026-07-29.
+
+## @octanejs/react-pdf
+
+[`packages/react-pdf`](../packages/react-pdf) `0.1.0` — ports `react-pdf@10.4.1`. Status data: [`packages/react-pdf/status.json`](../packages/react-pdf/status.json).
+
+Production Document, Page, Canvas, TextLayer, StructTree accessibility fallback, AnnotationLayer/forms, Thumbnail, Outline, PasswordResponses, LinkService, pdfjs, context hooks, render callbacks, refs, source/options handling, and the two CSS compatibility subpaths on pdfjs-dist 5.4.296.
+
+Known divergences:
+
+- The server export uses an inert PDF.js namespace so importing the package cannot evaluate browser-only DOMMatrix code; PDF work starts after hydration.
+- customTextRenderer HTML is sanitized before insertion instead of being injected verbatim.
+- Host callbacks receive native DOM events, with no synthetic text onChange layer.
+
+SSR / hydration: Document and Page render deterministic no-data/loading/error shells without browser globals. Hydration adopts those hosts and starts source/document/page work after effects run.
+
+Scope/evidence last checked: 2026-07-31.
+
+- All source, document, page, canvas, text, structure-tree, annotation, outline, and destination async completions are instance-local and stale-guarded.
+- CSS compatibility entries vendor the focused upstream layer styles instead of duplicating PDF.js's full viewer stylesheet.
 
 ## @octanejs/recharts
 

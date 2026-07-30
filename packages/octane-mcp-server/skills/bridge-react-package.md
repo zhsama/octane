@@ -32,6 +32,7 @@ of bridging by hand:
 | `@base-ui-components/react` | `@octanejs/base-ui` |
 | `@dnd-kit/react` | `@octanejs/dnd-kit` |
 | `sonner` | `@octanejs/sonner` |
+| `react-pdf` | `@octanejs/react-pdf` |
 | `recharts` | `@octanejs/recharts` |
 | `@react-three/fiber` | `@octanejs/three` |
 | `@visx/*` | `@octanejs/visx` |

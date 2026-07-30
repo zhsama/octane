@@ -49,6 +49,7 @@ export const KNOWN_BINDINGS = {
 	'@dnd-kit/react': '@octanejs/dnd-kit',
 	sonner: '@octanejs/sonner',
 	'react-error-boundary': '@octanejs/react-error-boundary',
+	'react-pdf': '@octanejs/react-pdf',
 	shadcn: '@octanejs/shadcn',
 	recharts: '@octanejs/recharts',
 	'@react-three/fiber': '@octanejs/three',

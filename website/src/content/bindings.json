@@ -55,10 +55,11 @@
   },
   {
     "title": "Forms and content",
-    "description": "Forms, rich-text editing, MDX, and translations.",
+    "description": "Forms, PDF documents, rich-text editing, MDX, and translations.",
     "packages": [
       "@octanejs/hook-form",
       "@octanejs/tanstack-form",
+      "@octanejs/react-pdf",
       "@octanejs/lexical",
       "@octanejs/tiptap",
       "@octanejs/mdx",

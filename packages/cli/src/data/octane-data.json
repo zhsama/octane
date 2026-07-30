@@ -313,6 +313,20 @@
       "verified": "2026-07-29"
     },
     {
+      "name": "@octanejs/react-pdf",
+      "version": "0.1.0",
+      "category": "Forms and content",
+      "upstream": { "package": "react-pdf", "version": "10.4.1" },
+      "surface": "Production Document, Page, Canvas, TextLayer, StructTree accessibility fallback, AnnotationLayer/forms, Thumbnail, Outline, PasswordResponses, LinkService, pdfjs, context hooks, render callbacks, refs, source/options handling, and the two CSS compatibility subpaths on pdfjs-dist 5.4.296.",
+      "divergences": [
+        "The server export uses an inert PDF.js namespace so importing the package cannot evaluate browser-only DOMMatrix code; PDF work starts after hydration.",
+        "customTextRenderer HTML is sanitized before insertion instead of being injected verbatim.",
+        "Host callbacks receive native DOM events, with no synthetic text onChange layer."
+      ],
+      "ssr": "Document and Page render deterministic no-data/loading/error shells without browser globals. Hydration adopts those hosts and starts source/document/page work after effects run.",
+      "verified": "2026-07-31"
+    },
+    {
       "name": "@octanejs/recharts",
       "version": "0.1.18",
       "category": "Data-heavy screens",
@@ -817,6 +831,7 @@
     "react-error-boundary": "@octanejs/react-error-boundary",
     "react-hook-form": "@octanejs/hook-form",
     "react-i18next": "@octanejs/i18next",
+    "react-pdf": "@octanejs/react-pdf",
     "react-redux": "@octanejs/redux",
     "react-router": "@octanejs/remix-router",
     "react-router-dom": "@octanejs/remix-router",

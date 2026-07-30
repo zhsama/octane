@@ -1,0 +1,21 @@
+import * as pdfjs from 'pdfjs-dist';
+import Document from './Document.tsrx';
+import LinkService from './LinkService';
+import Outline from './Outline.tsrx';
+import Page from './Page.tsrx';
+import PasswordResponses from './PasswordResponses';
+import Thumbnail from './Thumbnail.tsrx';
+import { useDocumentContext, useOutlineContext, usePageContext } from './contexts.tsrx';
+
+pdfjs.GlobalWorkerOptions.workerSrc = 'pdf.worker.mjs';
+
+export type { DocumentProps } from './Document.tsrx';
+export type { OutlineProps } from './Outline.tsrx';
+export type { PageProps } from './Page.tsrx';
+export type { ThumbnailProps } from './Thumbnail.tsrx';
+export type { Annotations, BinaryData, ClassName, CustomRenderer, CustomTextRenderer, Dest } from './types';
+export type { DocumentContextType, DocumentHandle, DocumentRenderProps, ExternalLinkRel, ExternalLinkTarget, File, FilterAnnotations, HostProps, ImageResourcesPath } from './types';
+export type { NodeOrRenderer, OnItemClickArgs, OnLoadProgressArgs, OnPasswordCallback, Options, OutlineContextType, PageCallback, PageColors, PageContextType, PageRenderProps } from './types';
+export type { PasswordResponse, PasswordResponses as PasswordResponsesType, Ref, RegisterPage, RenderMode, ResolvedDest, ScrollPageIntoViewArgs, Source, StructTreeNode, TextContent, TextItem, TextMarkedContent, UnregisterPage } from './types';
+
+export { Document, LinkService, Outline, Page, PasswordResponses, Thumbnail, pdfjs, useDocumentContext, useOutlineContext, usePageContext };
