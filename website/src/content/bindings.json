@@ -33,7 +33,7 @@
   },
   {
     "title": "UI and interaction",
-    "description": "Primitives, browser hooks, positioning, motion, drag and drop, toasts, command menus, icons, keyboard shortcuts, and event pacing.",
+    "description": "Primitives, browser hooks, positioning, motion, drag and drop, smart graph edges, toasts, command menus, icons, keyboard shortcuts, and event pacing.",
     "packages": [
       "@octanejs/radix",
       "@octanejs/base-ui",
@@ -42,6 +42,7 @@
       "@octanejs/floating-ui",
       "@octanejs/motion",
       "@octanejs/dnd-kit",
+      "@octanejs/xyflow-smart-edge",
       "@octanejs/sonner",
       "@octanejs/react-error-boundary",
       "@octanejs/cmdk",

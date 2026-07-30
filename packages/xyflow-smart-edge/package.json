@@ -1,0 +1,66 @@
+{
+  "name": "@octanejs/xyflow-smart-edge",
+  "version": "0.1.0",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "engines": {
+    "node": ">=22"
+  },
+  "description": "Octane-native obstacle-avoiding smart SVG edges, ported from @tisoap/react-flow-smart-edge.",
+  "author": {
+    "name": "Dominic Gannaway",
+    "email": "dg@domgan.com"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/octanejs/octane.git",
+    "directory": "packages/xyflow-smart-edge"
+  },
+  "main": "dist/server/index.js",
+  "module": "dist/client/index.js",
+  "types": "dist/types/index.d.ts",
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md",
+    "UPSTREAM.md"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/types/index.d.ts",
+      "browser": "./dist/client/index.js",
+      "node": "./dist/server/index.js",
+      "default": "./dist/client/index.js"
+    }
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "prepack": "pnpm run build",
+    "test": "vitest run --root ../.. --project xyflow-smart-edge --project xyflow-smart-edge-ssr",
+    "typecheck": "tsrx-tsc --noEmit -p tsconfig.json && tsgo --noEmit -p typetests/tsconfig.json",
+    "types:check": "node scripts/generate-tsrx-types.mjs --check",
+    "types:generate": "node scripts/generate-tsrx-types.mjs"
+  },
+  "dependencies": {
+    "@xyflow/system": "catalog:default",
+    "csstype": "catalog:default"
+  },
+  "peerDependencies": {
+    "octane": "workspace:*"
+  },
+  "devDependencies": {
+    "@tisoap/react-flow-smart-edge": "catalog:default",
+    "@xyflow/react": "catalog:default",
+    "esbuild": "catalog:default",
+    "octane": "workspace:*",
+    "prettier": "catalog:default",
+    "react": "catalog:default",
+    "react-dom": "catalog:default",
+    "typescript": "catalog:default",
+    "vitest": "catalog:default"
+  }
+}

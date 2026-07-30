@@ -6,7 +6,7 @@ This inventory is derived from the manifests directly under `packages/`.
 Repository tooling imports the same discovery helper, so adding, renaming, or
 privatizing a package updates every package-wide check together.
 
-**62 publishable package(s), including 50 framework binding(s).**
+**63 publishable package(s), including 51 framework binding(s).**
 
 All publishable packages share the enforced Node.js engine baseline `>=22`.
 
@@ -72,6 +72,7 @@ All publishable packages share the enforced Node.js engine baseline `>=22`.
 | `@octanejs/visx` | [`packages/visx`](../packages/visx) | framework binding | `0.1.15` | 49 |
 | `@octanejs/vite-plugin` | [`packages/vite-plugin-octane`](../packages/vite-plugin-octane) | metaframework | `0.1.21` | 3 |
 | `@octanejs/wagmi` | [`packages/wagmi`](../packages/wagmi) | framework binding | `0.0.1` | 3 |
+| `@octanejs/xyflow-smart-edge` | [`packages/xyflow-smart-edge`](../packages/xyflow-smart-edge) | framework binding | `0.1.0` | 1 |
 | `@octanejs/zustand` | [`packages/zustand`](../packages/zustand) | framework binding | `0.1.20` | 5 |
 | `octane` | [`packages/octane`](../packages/octane) | core runtime + compiler | `0.1.21` | 20 |
 

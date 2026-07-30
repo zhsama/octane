@@ -1,0 +1,19 @@
+{
+  "upstream": {
+    "package": "@tisoap/react-flow-smart-edge",
+    "version": "4.13.0"
+  },
+  "surface": "Echo-compatible explicit-node SmartEdge plus the framework-neutral routing core: A*/jump-point search, obstacle grids and bounds, endpoint alignment, SVG draw functions, subflow preparation, waypoint routing, floating geometry, and a bounded shared-grid cache.",
+  "divergences": [
+    "SmartEdge receives nodes explicitly and has no @xyflow/react runtime or peer; it can be embedded by any Octane flow renderer with XYFlow-shaped nodes and edge props.",
+    "Obstacle bounds follow @xyflow/system dimension precedence and per-node origin semantics, correcting upstream 4.13.0's measured-only, top-left-origin assumption.",
+    "Editable control points, circuit hops, SmartEdgeBatchRoutingProvider/useSmartEdgeRoute, React Flow store hooks, connection-line components, and preset edge components are not exposed until a real Octane XYFlow binding owns those integration contracts.",
+    "Fallback components must be Octane components; the built-in fallback is the framework-neutral @xyflow/system Bezier path."
+  ],
+  "ssr": "Supported and tested: routed SVG paths and labels render on the server, and hydration adopts the existing SVG hosts while retaining live prop updates.",
+  "verified": "2026-07-31",
+  "notes": [
+    "The shared cache stores only endpoint-independent obstacle matrices, uses an unambiguous structured geometry key, is capped at eight signatures, and creates a fresh mutable search grid for every route.",
+    "Pure routing differential tests use the pinned upstream package as the oracle."
+  ]
+}

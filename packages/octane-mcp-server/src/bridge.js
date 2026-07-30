@@ -47,6 +47,7 @@ export const KNOWN_BINDINGS = {
 	'react-hook-form': '@octanejs/hook-form',
 	'@base-ui-components/react': '@octanejs/base-ui',
 	'@dnd-kit/react': '@octanejs/dnd-kit',
+	'@tisoap/react-flow-smart-edge': '@octanejs/xyflow-smart-edge',
 	sonner: '@octanejs/sonner',
 	'react-error-boundary': '@octanejs/react-error-boundary',
 	shadcn: '@octanejs/shadcn',

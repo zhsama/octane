@@ -1930,6 +1930,47 @@ export default defineConfig({
 			},
 			{
 				test: {
+					name: 'xyflow-smart-edge',
+					include: [
+						'packages/xyflow-smart-edge/tests/**/*.test.ts',
+						'!packages/xyflow-smart-edge/tests/ssr/**/*.test.ts',
+					],
+					environment: 'jsdom',
+					globals: false,
+				},
+				plugins: [octane()],
+				resolve: {
+					alias: [
+						{
+							find: /^@octanejs\/xyflow-smart-edge$/,
+							replacement: resolve(import.meta.dirname, 'packages/xyflow-smart-edge/src/index.ts'),
+						},
+					],
+				},
+			},
+			{
+				test: {
+					name: 'xyflow-smart-edge-ssr',
+					include: ['packages/xyflow-smart-edge/tests/ssr/**/*.test.ts'],
+					environment: 'node',
+					globals: false,
+				},
+				plugins: [octane({ ssr: true })],
+				resolve: {
+					alias: [
+						{
+							find: /^octane$/,
+							replacement: resolve(import.meta.dirname, 'packages/octane/src/server/index.ts'),
+						},
+						{
+							find: /^@octanejs\/xyflow-smart-edge$/,
+							replacement: resolve(import.meta.dirname, 'packages/xyflow-smart-edge/src/index.ts'),
+						},
+					],
+				},
+			},
+			{
+				test: {
 					name: 'dnd-kit',
 					include: [
 						'packages/dnd-kit/tests/conformance/**/*.test.ts',
