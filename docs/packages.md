@@ -6,7 +6,7 @@ This inventory is derived from the manifests directly under `packages/`.
 Repository tooling imports the same discovery helper, so adding, renaming, or
 privatizing a package updates every package-wide check together.
 
-**62 publishable package(s), including 50 framework binding(s).**
+**63 publishable package(s), including 51 framework binding(s).**
 
 All publishable packages share the enforced Node.js engine baseline `>=22`.
 
@@ -44,6 +44,7 @@ All publishable packages share the enforced Node.js engine baseline `>=22`.
 | `@octanejs/redux` | [`packages/redux`](../packages/redux) | framework binding | `0.1.18` | 1 |
 | `@octanejs/redux-toolkit` | [`packages/redux-toolkit`](../packages/redux-toolkit) | framework binding | `0.1.16` | 4 |
 | `@octanejs/remix-router` | [`packages/remix-router`](../packages/remix-router) | framework binding | `0.1.17` | 2 |
+| `@octanejs/resizable-panels` | [`packages/resizable-panels`](../packages/resizable-panels) | framework binding | `0.1.0` | 1 |
 | `@octanejs/rsbuild-plugin` | [`packages/rsbuild-plugin-octane`](../packages/rsbuild-plugin-octane) | metaframework | `0.1.16` | 3 |
 | `@octanejs/rspack-plugin` | [`packages/rspack-plugin-octane`](../packages/rspack-plugin-octane) | compiler integration | `0.1.16` | 2 |
 | `@octanejs/seo` | [`packages/seo`](../packages/seo) | document metadata | `0.0.6` | 1 |

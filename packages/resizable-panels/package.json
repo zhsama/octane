@@ -1,0 +1,65 @@
+{
+  "name": "@octanejs/resizable-panels",
+  "version": "0.1.0",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "description": "react-resizable-panels bindings for Octane with pointer, keyboard, ARIA, constraints, and imperative layout APIs.",
+  "author": {
+    "name": "Dominic Gannaway",
+    "email": "dg@domgan.com"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/octanejs/octane.git",
+    "directory": "packages/resizable-panels"
+  },
+  "main": "dist/server/index.js",
+  "module": "dist/client/index.js",
+  "types": "dist/types/index.d.ts",
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md",
+    "UPSTREAM.md"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/types/index.d.ts",
+      "browser": "./dist/client/index.js",
+      "node": "./dist/server/index.js",
+      "default": "./dist/client/index.js"
+    }
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "prepack": "pnpm run build",
+    "test": "vitest run --root ../.. --project resizable-panels --project resizable-panels-browser --project resizable-panels-ssr",
+    "typecheck": "tsrx-tsc --noEmit -p tsconfig.json && pnpm run types:check",
+    "types:check": "node scripts/generate-tsrx-types.mjs --check && node scripts/check-public-types.mjs",
+    "types:generate": "node scripts/generate-tsrx-types.mjs"
+  },
+  "peerDependencies": {
+    "octane": "workspace:*"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "catalog:default",
+    "@tsrx/react": "catalog:default",
+    "@types/react": "catalog:default",
+    "@types/react-dom": "catalog:default",
+    "esbuild": "catalog:default",
+    "octane": "workspace:*",
+    "playwright": "catalog:default",
+    "react": "catalog:default",
+    "react-dom": "catalog:default",
+    "react-resizable-panels": "catalog:default",
+    "typescript": "catalog:default",
+    "vite": "catalog:default",
+    "vitest": "catalog:default"
+  }
+}

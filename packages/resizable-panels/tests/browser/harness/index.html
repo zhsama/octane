@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>@octanejs/resizable-panels browser harness</title>
+		<style>
+			* {
+				box-sizing: border-box;
+			}
+
+			body {
+				margin: 0;
+				padding: 24px;
+				font-family: system-ui, sans-serif;
+			}
+
+			main {
+				display: grid;
+				gap: 24px;
+			}
+
+			[data-group] {
+				border: 1px solid #64748b;
+			}
+
+			[data-panel] > div {
+				display: grid;
+				place-items: center;
+				background: #e2e8f0;
+			}
+
+			[data-separator] {
+				background: #334155;
+			}
+
+			#horizontal-separator {
+				width: 8px;
+			}
+
+			#vertical-separator {
+				height: 8px;
+			}
+
+			.controls {
+				display: flex;
+				gap: 8px;
+			}
+		</style>
+	</head>
+	<body>
+		<div id="root"></div>
+		<script type="module" src="/main.tsrx"></script>
+	</body>
+</html>

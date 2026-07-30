@@ -367,6 +367,19 @@
       "verified": "2026-07-13"
     },
     {
+      "name": "@octanejs/resizable-panels",
+      "version": "0.1.0",
+      "category": "UI and interaction",
+      "upstream": { "package": "react-resizable-panels", "version": "4.12.0" },
+      "surface": "Complete public 4.12.0 surface: Group, Panel, Separator, percentage and CSS-unit constraints, horizontal and vertical groups, collapsible panels, pointer and keyboard resizing, WAI-ARIA separator state, callbacks, persistence, imperative group and panel methods, typed ref hooks, and isCoarsePointer.",
+      "divergences": [
+        "Components, contexts, hooks, and refs target Octane; refs are ordinary props and DOM callbacks receive native events.",
+        "The layout, constraint, hit-testing, pointer, keyboard, cursor, persistence, and imperative engines are retained from upstream 4.12.0."
+      ],
+      "ssr": "Group, Panel, and Separator emit deterministic initial flex markup without browser access. DOM measurement, ResizeObserver registration, and interactive resizing begin in layout effects after mount. useDefaultLayout retains upstream's client-only localStorage default; callers rendering that hook on the server must pass a server-safe LayoutStorage implementation.",
+      "verified": "2026-07-31"
+    },
+    {
       "name": "@octanejs/shadcn",
       "version": "0.0.6",
       "category": "UI and interaction",
@@ -818,6 +831,7 @@
     "react-hook-form": "@octanejs/hook-form",
     "react-i18next": "@octanejs/i18next",
     "react-redux": "@octanejs/redux",
+    "react-resizable-panels": "@octanejs/resizable-panels",
     "react-router": "@octanejs/remix-router",
     "react-router-dom": "@octanejs/remix-router",
     "react-stately": "@octanejs/aria",

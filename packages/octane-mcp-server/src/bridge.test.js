@@ -253,6 +253,10 @@ describe('bridgeReportFromSource', () => {
 });
 
 describe('KNOWN_BINDINGS', () => {
+	it('maps react-resizable-panels to the maintained Octane binding', () => {
+		expect(KNOWN_BINDINGS['react-resizable-panels']).toBe('@octanejs/resizable-panels');
+	});
+
 	it('maps every public Visx entry point to the aggregate Octane port', async () => {
 		const packagesRoot = fileURLToPath(new URL('../..', import.meta.url));
 		const manifest = JSON.parse(await readFile(join(packagesRoot, 'visx', 'package.json'), 'utf8'));

@@ -1930,6 +1930,55 @@ export default defineConfig({
 			},
 			{
 				test: {
+					name: 'resizable-panels',
+					include: ['packages/resizable-panels/tests/conformance/**/*.test.ts'],
+					environment: 'jsdom',
+					setupFiles: ['packages/resizable-panels/tests/_setup.ts'],
+					globals: false,
+				},
+				plugins: [octane()],
+				resolve: {
+					alias: [
+						{
+							find: /^@octanejs\/resizable-panels$/,
+							replacement: resolve(import.meta.dirname, 'packages/resizable-panels/src/index.ts'),
+						},
+					],
+				},
+			},
+			{
+				test: {
+					name: 'resizable-panels-browser',
+					include: ['packages/resizable-panels/tests/browser/**/*.test.ts'],
+					environment: 'node',
+					globals: false,
+					testTimeout: 60_000,
+					hookTimeout: 60_000,
+				},
+			},
+			{
+				test: {
+					name: 'resizable-panels-ssr',
+					include: ['packages/resizable-panels/tests/ssr/**/*.test.ts'],
+					environment: 'node',
+					globals: false,
+				},
+				plugins: [octane({ ssr: true })],
+				resolve: {
+					alias: [
+						{
+							find: /^octane$/,
+							replacement: resolve(import.meta.dirname, 'packages/octane/src/server/index.ts'),
+						},
+						{
+							find: /^@octanejs\/resizable-panels$/,
+							replacement: resolve(import.meta.dirname, 'packages/resizable-panels/src/index.ts'),
+						},
+					],
+				},
+			},
+			{
+				test: {
 					name: 'dnd-kit',
 					include: [
 						'packages/dnd-kit/tests/conformance/**/*.test.ts',
