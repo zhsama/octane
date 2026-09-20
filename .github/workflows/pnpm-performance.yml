@@ -1,0 +1,63 @@
+name: pnpm performance comparison
+
+on:
+  push:
+    branches: [test/pnpm12-performance-ci]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pnpm-performance-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compare:
+    name: pnpm 11 vs 12 on one Ubuntu runner
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout benchmark inputs
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.19.0
+      - name: Prepare isolated worktree and exact package managers
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/pnpm-comparison/experiment"
+          python3 - <<'PY'
+          import os, shutil
+          free = shutil.disk_usage(os.environ['RUNNER_TEMP']).free
+          assert free >= 16 * 2**30, f'Need at least 16 GiB for isolated stores and one installation, got {free / 2**30:.1f} GiB'
+          PY
+          git worktree add --detach "$RUNNER_TEMP/pnpm-comparison/octane" "$GITHUB_SHA"
+          cp scripts/pnpm-performance/run.py "$RUNNER_TEMP/pnpm-comparison/experiment/run.py"
+          cp scripts/pnpm-performance/README.md "$RUNNER_TEMP/pnpm-comparison/experiment/README.md"
+          npm install --prefix "$RUNNER_TEMP/pnpm-comparison/experiment/tools/pnpm11" --ignore-scripts --no-audit --no-fund pnpm@11.15.1
+          npm install --prefix "$RUNNER_TEMP/pnpm-comparison/experiment/tools/pnpm12" --ignore-scripts --no-audit --no-fund pnpm@12.5.1
+          node "$RUNNER_TEMP/pnpm-comparison/experiment/tools/pnpm12/node_modules/pnpm/install.js"
+          uname -a > "$RUNNER_TEMP/pnpm-comparison/experiment/runner.txt"
+          lscpu >> "$RUNNER_TEMP/pnpm-comparison/experiment/runner.txt"
+          free -h >> "$RUNNER_TEMP/pnpm-comparison/experiment/runner.txt"
+          df -h >> "$RUNNER_TEMP/pnpm-comparison/experiment/runner.txt"
+      - name: Measure cold, cached and developer workloads
+        run: python3 "$RUNNER_TEMP/pnpm-comparison/experiment/run.py" all
+      - name: Publish raw measurements and logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: pnpm-performance-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/pnpm-comparison/experiment/*.json
+            ${{ runner.temp }}/pnpm-comparison/experiment/*.jsonl
+            ${{ runner.temp }}/pnpm-comparison/experiment/*.txt
+            ${{ runner.temp }}/pnpm-comparison/experiment/*.md
+            ${{ runner.temp }}/pnpm-comparison/experiment/*.py
+            ${{ runner.temp }}/pnpm-comparison/experiment/*.patch
+            ${{ runner.temp }}/pnpm-comparison/experiment/logs
+          retention-days: 30
