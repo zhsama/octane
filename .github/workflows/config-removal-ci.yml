@@ -924,7 +924,7 @@ jobs:
       # dispositions/local evidence and keeps the generated report current.
       - name: Check Redact-derived adversarial contract ledger
         env:
-          OCTANE_REDACT_AUDIT_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          OCTANE_REDACT_AUDIT_BASE: 2a952b87d1da1ce6f9a115173126fed2904c444b
         run: pnpm redact-audit:check
 
       # Production error URLs are a public compatibility surface. Keep the
@@ -932,7 +932,7 @@ jobs:
       # runtime call sites synchronized before a package can be built.
       - name: Check Octane production error catalog
         env:
-          OCTANE_ERROR_CODES_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          OCTANE_ERROR_CODES_BASE: 2a952b87d1da1ce6f9a115173126fed2904c444b
         run: pnpm error-codes:check
 
       # Package discovery is shared by every package-wide repository check.
