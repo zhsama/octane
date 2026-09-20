@@ -30,9 +30,9 @@
       "node": ">=22",
       "platform": "any",
       "arch": "any",
-      "packageManager": "pnpm@11.15.1",
+      "packageManager": "pnpm@12.5.1",
       "lockfile": "pnpm-lock.yaml",
-      "lockfileSha256": "bb399b1be4dde8dc7044348a89a42a7b14683c5e5600aac7060e39187084c126"
+      "lockfileSha256": "e838f0aea198f380736a9bada94d5d139223e2281482bdbd38d123e49995f9de"
     }
   },
   "lanes": [
@@ -72,7 +72,7 @@
         {
           "path": "packages/octane-is/scripts/update-audit.mjs",
           "role": "support",
-          "sha256": "daf330fc3332221ef3b261f11efb3ed5e2b41b317e215c75a67752ba2a8a55a0"
+          "sha256": "8f51ca3584b5b907564487993ddaecd21209658d5deae0ebf46f2c65c06ee6b2"
         },
         {
           "path": "packages/octane-is/audit/pristine-suite.json",
@@ -122,7 +122,7 @@
         {
           "path": "packages/octane-is/scripts/update-audit.mjs",
           "role": "support",
-          "sha256": "daf330fc3332221ef3b261f11efb3ed5e2b41b317e215c75a67752ba2a8a55a0"
+          "sha256": "8f51ca3584b5b907564487993ddaecd21209658d5deae0ebf46f2c65c06ee6b2"
         },
         {
           "path": "packages/octane-is/audit/upstream-patches/tests/upstream/ReactIs-test.js.patch",

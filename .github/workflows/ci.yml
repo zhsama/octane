@@ -420,7 +420,7 @@ jobs:
           cache: "pnpm"
 
       - name: Install dependencies
-        run: pnpm install --prod false --frozen-lockfile
+        run: pnpm install --prod=false --frozen-lockfile
 
       # Real builds, packed consumers, browser suites, and the ordinary suite
       # all use the repository's Node 24 CI execution target.
@@ -490,7 +490,7 @@ jobs:
           cache: "pnpm"
 
       - name: Install dependencies
-        run: pnpm install --prod false --frozen-lockfile
+        run: pnpm install --prod=false --frozen-lockfile
 
       # Browser parity lanes launch Chromium through Playwright.
       # Keep this package-agnostic so adding a binding never patches the workflow.
@@ -644,7 +644,7 @@ jobs:
           cache: "pnpm"
 
       - name: Install dependencies
-        run: pnpm install --prod false --frozen-lockfile
+        run: pnpm install --prod=false --frozen-lockfile
 
       - name: Install Playwright Chromium
         run: |
@@ -692,7 +692,7 @@ jobs:
 
       - name: Install dependencies
         id: install_heavy_node_dependencies
-        run: pnpm install --prod false --frozen-lockfile
+        run: pnpm install --prod=false --frozen-lockfile
 
       - name: Setup Bun
         id: setup_heavy_node_bun
@@ -782,7 +782,7 @@ jobs:
           cache: "pnpm"
 
       - name: Install dependencies
-        run: pnpm install --prod false --frozen-lockfile
+        run: pnpm install --prod=false --frozen-lockfile
 
       - name: Install selected Playwright browser
         if: ${{ matrix.lane == 'browser' }}
@@ -1092,7 +1092,7 @@ jobs:
           cache: "pnpm"
 
       - name: Install dependencies
-        run: pnpm install --prod false --frozen-lockfile
+        run: pnpm install --prod=false --frozen-lockfile
 
       - name: Install Playwright Chromium
         run: |

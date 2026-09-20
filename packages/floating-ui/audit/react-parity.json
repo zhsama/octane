@@ -38,9 +38,9 @@
       "node": ">=22",
       "platform": "any",
       "arch": "any",
-      "packageManager": "pnpm@11.15.1",
+      "packageManager": "pnpm@12.5.1",
       "lockfile": "pnpm-lock.yaml",
-      "lockfileSha256": "bb399b1be4dde8dc7044348a89a42a7b14683c5e5600aac7060e39187084c126"
+      "lockfileSha256": "e838f0aea198f380736a9bada94d5d139223e2281482bdbd38d123e49995f9de"
     }
   },
   "lanes": [
@@ -292,7 +292,7 @@
         {
           "path": "packages/floating-ui/scripts/generate-parity-evidence.mjs",
           "role": "support",
-          "sha256": "eca41d24d80cbc572c607b94a2fc32295bcf96ab813b4876cff0eba637b5d12a"
+          "sha256": "a8012915e9073a726b5cbc3a59af9f6a020a678c10635534241b3c0b61dd296b"
         },
         {
           "path": "packages/floating-ui/audit/upstream-patches/tests/upstream/react-dom/index.test-d.tsx.patch",
