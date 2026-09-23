@@ -41,7 +41,7 @@
       "node": ">=22",
       "platform": "any",
       "arch": "any",
-      "packageManager": "pnpm@11.15.1",
+      "packageManager": "pnpm@12.6.0",
       "lockfile": "pnpm-lock.yaml",
       "lockfileSha256": "cfc0a80a9ddac7163033affd9bdaf46346692ffa17bb3a3d1b276efb1b831ebc"
     }

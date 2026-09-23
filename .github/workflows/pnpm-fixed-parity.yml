@@ -1,0 +1,220 @@
+name: Fixed pnpm parity validation
+
+on:
+  push:
+    branches: [test/pnpm12-fixed-parity]
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  # A merged pull request changes github.ref to main on its closed event. Keep
+  # pull request runs grouped by number so closing one cancels only its CI run,
+  # while the merge's new main run proceeds in its own ref-based group.
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  npm_config_manage_package_manager_versions: "false"
+  pnpm_config_manage_package_manager_versions: "false"
+  pnpm_config_pm_on_fail: ignore
+  pnpm_config_enable_global_virtual_store: "false"
+  # Named once: the sharded suite excludes these specs and website_e2e runs
+  # them. Splitting the paths means a stale name could silently stop running
+  # one, so website_e2e asserts every file exists before it starts.
+  WEBSITE_A11Y_SPEC: website/tests/a11y.e2e.test.ts
+  WEBSITE_DOCS_SPEC: website/tests/core-apis-docs.test.ts
+  WEBSITE_E2E_SPEC: website/tests/ssr-hydration.e2e.test.ts
+  WEBSITE_SSR_SPEC: website/tests/ssr-smoke.test.ts
+  ASTRO_E2E_SPEC: packages/astro/tests/astro.e2e.test.ts
+
+jobs:
+  prepare_pnpm:
+    name: Pin official pnpm binary for 90422c7
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Verify source run and retrieve official binary
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          test "$(gh api repos/pnpm/pnpm/actions/runs/35788821131 --jq .head_sha)" = 90422c7c638c46cc6450c25308b2d42bba3a1dfc
+          test "$(gh api repos/pnpm/pnpm/actions/runs/35788821131 --jq .conclusion)" = success
+          gh run download 35788821131 --repo pnpm/pnpm --name integrated-benchmark-bin-blacksmith-8vcpu-ubuntu-2404-HEAD --dir "$RUNNER_TEMP/upstream"
+          cd "$RUNNER_TEMP/upstream"
+          echo '1a22e769cc90631bf4a42a5b950bde8f6a4be483dd5fc2524627440566138b31  revision-HEAD.tar' | sha256sum --check
+          mkdir -p "$RUNNER_TEMP/pnpm-fixed"
+          tar -xOf revision-HEAD.tar bench-work-env/pnpr@HEAD/pacquet/target/release/pnpm > "$RUNNER_TEMP/pnpm-fixed/pnpm"
+          cd "$RUNNER_TEMP/pnpm-fixed"
+          echo 'e5841d66a53f0cb19c4b13324497eccb6ef3e015081bfb0e729646a81519d450  pnpm' | sha256sum --check
+          chmod +x pnpm
+          ./pnpm --version
+      - name: Keep verified binary available for this experiment
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: pnpm-fixed-90422c7
+          path: ${{ runner.temp }}/pnpm-fixed/pnpm
+          if-no-files-found: error
+          retention-days: 30
+
+  react_parity_shard:
+    name: React parity shard (${{ matrix.shard }}/4)
+    needs: prepare_pnpm
+    # The complete package suite is intentionally Node 24-only. Like the
+    # general shards, an authenticated release or lightweight change inherits
+    # the last successful full run through CI provenance.
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        # Vitest hashes parity file paths across these workers. Non-Vitest
+        # manifests remain whole and use the same generic shard coordinates.
+        shard: [1, 2, 3, 4]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Download fixed pnpm
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: pnpm-fixed-90422c7
+          path: ${{ runner.temp }}/pnpm-fixed
+
+      - name: Activate fixed pnpm
+        shell: bash
+        run: |
+          cd "$RUNNER_TEMP/pnpm-fixed"
+          echo 'e5841d66a53f0cb19c4b13324497eccb6ef3e015081bfb0e729646a81519d450  pnpm' | sha256sum --check
+          chmod +x pnpm
+          echo "$RUNNER_TEMP/pnpm-fixed" >> "$GITHUB_PATH"
+          ./pnpm --version
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.19.0
+
+      - name: Install dependencies
+        run: pnpm install --prod=false --frozen-lockfile
+
+      # Browser parity lanes launch Chromium through Playwright.
+      # Keep this package-agnostic so adding a binding never patches the workflow.
+      - name: Install Playwright Chromium
+        run: |
+          bash scripts/ci-apt-https.sh
+          pnpm --filter website exec playwright install --with-deps chromium
+
+      # The manifest runner executes every required runtime and type lane. Each
+      # runner's JSON report proves the exact identities without a separate
+      # pre-execution Vitest collection pass. The aggregate below combines the
+      # file shards before proving complete lane coverage.
+      - name: Check React parity inventories and execute required lanes
+        env:
+          REACT_PARITY_VITEST_REPORT: ${{ runner.temp }}/react-parity-vitest/shard-${{ matrix.shard }}.json
+          # Retain browser-process exits and RPC disconnects when a runner stops
+          # before it can produce a complete assertion report.
+          DEBUG: pw:browser*,vitest:browser:api,vitest:browser:pool,vitest:browser:playwright
+          VITEST_PW_DEBUG: "1"
+          REACT_PARITY_BROWSER_DIAGNOSTICS: "1"
+          OCTANE_HYDRATION_SSR_TRACE: "1"
+        run: pnpm react-parity:check --shard ${{ matrix.shard }}/4
+
+      - name: Collect browser failure resource diagnostics
+        if: failure()
+        run: |
+          free -h
+          df -h /tmp /dev/shm
+          for resource in memory.events memory.current memory.peak; do
+            if [ -r "/sys/fs/cgroup/$resource" ]; then
+              printf '%s\n' "$resource"
+              cat "/sys/fs/cgroup/$resource"
+            fi
+          done
+          sudo -n dmesg --ctime | tail -100 || true
+
+      - name: Upload failed React parity diagnostics
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: react-parity-diagnostics-${{ matrix.shard }}
+          path: ${{ runner.temp }}/react-parity-vitest/shard-${{ matrix.shard }}.json.failed
+          retention-days: 1
+          overwrite: true
+
+      - name: Upload React parity Vitest shard report
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: react-parity-vitest-${{ matrix.shard }}
+          path: ${{ runner.temp }}/react-parity-vitest/shard-${{ matrix.shard }}.json
+          retention-days: 1
+
+  react_parity_checks:
+    name: React parity checks
+    needs: react_parity_shard
+    if: ${{ always() && !cancelled() }}
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Verify all React parity shards passed
+        env:
+          REACT_PARITY_SHARD_RESULT: ${{ needs.react_parity_shard.result }}
+        run: test "$REACT_PARITY_SHARD_RESULT" = success
+
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.19.0
+
+      - name: Download React parity Vitest shard reports
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          pattern: react-parity-vitest-*
+          path: ${{ runner.temp }}/react-parity-vitest
+          merge-multiple: true
+
+      - name: Verify complete React parity Vitest coverage
+        run: >-
+          node scripts/react-parity/verify-vitest-shards.mjs
+          --reports-directory "${{ runner.temp }}/react-parity-vitest"
+          --expected-shards 4
+
+  example_teardown_repro:
+    name: Compare example server process cleanup
+    needs: prepare_pnpm
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.19.0
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: pnpm-fixed-90422c7
+          path: ${{ runner.temp }}/pnpm-fixed
+      - name: Prepare verified binaries
+        run: |
+          cd "$RUNNER_TEMP/pnpm-fixed"
+          echo 'e5841d66a53f0cb19c4b13324497eccb6ef3e015081bfb0e729646a81519d450  pnpm' | sha256sum --check
+          chmod +x pnpm
+          npm install --prefix "$RUNNER_TEMP/pnpm11" --ignore-scripts --no-audit --no-fund pnpm@11.15.1
+      - name: Reproduce Playwright process group cleanup contract
+        env:
+          PNPM_REPRO_BINARY_11: ${{ runner.temp }}/pnpm11/node_modules/.bin/pnpm
+          PNPM_REPRO_BINARY_12: ${{ runner.temp }}/pnpm-fixed/pnpm
+          PNPM_REPRO_RESULTS: ${{ runner.temp }}/teardown-results.json
+        run: node scripts/pnpm-fixed-performance/teardown-repro.mjs
+      - name: Preserve process cleanup evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: pnpm-process-cleanup
+          path: ${{ runner.temp }}/teardown-results.json
+          if-no-files-found: error
+          retention-days: 30
