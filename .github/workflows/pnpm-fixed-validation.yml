@@ -1,0 +1,1548 @@
+name: Fixed pnpm validation
+
+on:
+  push:
+    branches: [test/pnpm12-fixed-validation]
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  # A merged pull request changes github.ref to main on its closed event. Keep
+  # pull request runs grouped by number so closing one cancels only its CI run,
+  # while the merge's new main run proceeds in its own ref-based group.
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  npm_config_manage_package_manager_versions: "false"
+  pnpm_config_manage_package_manager_versions: "false"
+  pnpm_config_pm_on_fail: ignore
+  pnpm_config_enable_global_virtual_store: "false"
+  # Named once: the sharded suite excludes these specs and website_e2e runs
+  # them. Splitting the paths means a stale name could silently stop running
+  # one, so website_e2e asserts every file exists before it starts.
+  WEBSITE_A11Y_SPEC: website/tests/a11y.e2e.test.ts
+  WEBSITE_DOCS_SPEC: website/tests/core-apis-docs.test.ts
+  WEBSITE_E2E_SPEC: website/tests/ssr-hydration.e2e.test.ts
+  WEBSITE_SSR_SPEC: website/tests/ssr-smoke.test.ts
+  ASTRO_E2E_SPEC: packages/astro/tests/astro.e2e.test.ts
+
+jobs:
+  prepare_pnpm:
+    name: Pin official pnpm binary for 90422c7
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Verify source run and retrieve official binary
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          test "$(gh api repos/pnpm/pnpm/actions/runs/35788821131 --jq .head_sha)" = 90422c7c638c46cc6450c25308b2d42bba3a1dfc
+          test "$(gh api repos/pnpm/pnpm/actions/runs/35788821131 --jq .conclusion)" = success
+          gh run download 35788821131 --repo pnpm/pnpm --name integrated-benchmark-bin-blacksmith-8vcpu-ubuntu-2404-HEAD --dir "$RUNNER_TEMP/upstream"
+          cd "$RUNNER_TEMP/upstream"
+          echo '1a22e769cc90631bf4a42a5b950bde8f6a4be483dd5fc2524627440566138b31  revision-HEAD.tar' | sha256sum --check
+          mkdir -p "$RUNNER_TEMP/pnpm-fixed"
+          tar -xOf revision-HEAD.tar bench-work-env/pnpr@HEAD/pacquet/target/release/pnpm > "$RUNNER_TEMP/pnpm-fixed/pnpm"
+          cd "$RUNNER_TEMP/pnpm-fixed"
+          echo 'e5841d66a53f0cb19c4b13324497eccb6ef3e015081bfb0e729646a81519d450  pnpm' | sha256sum --check
+          chmod +x pnpm
+          ./pnpm --version
+      - name: Keep verified binary available for this experiment
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: pnpm-fixed-90422c7
+          path: ${{ runner.temp }}/pnpm-fixed/pnpm
+          if-no-files-found: error
+          retention-days: 30
+
+  release_change:
+    needs: prepare_pnpm
+    name: classify changeset release
+    # GitHub still emits workflow events while a pull request is a draft. Keep
+    # every expensive job behind this guard. The two tiny required-check
+    # reporters below still run so branch protection does not remain pending.
+    if: ${{ github.event.action != 'closed' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+    outputs:
+      is_release: ${{ steps.classify.outputs.is_release }}
+      is_release_pr: ${{ steps.classify.outputs.is_release_pr }}
+      is_release_merge: ${{ steps.classify.outputs.is_release_merge }}
+      full_ci: ${{ steps.verify_scope.outputs.full_ci }}
+
+    steps:
+      # Authenticate both a generated release PR event and the eventual main
+      # merge from PR metadata, commit ancestry, authorship, and changed files.
+      # Any missing or unexpected data falls back to normal CI.
+      - name: Identify a generated Changesets release change
+        id: classify
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        with:
+          script: |
+            core.setOutput("is_release", "false");
+            core.setOutput("is_release_pr", "false");
+            core.setOutput("is_release_merge", "false");
+
+            try {
+              const { owner, repo } = context.repo;
+              const expectedPull = (pull) =>
+                pull.title === "Version Packages" &&
+                pull.user?.login === "github-actions[bot]" &&
+                pull.base.ref === "main" &&
+                pull.base.repo?.full_name === `${owner}/${repo}` &&
+                pull.head.ref === "changeset-release/main" &&
+                pull.head.repo?.full_name === `${owner}/${repo}`;
+
+              let pull;
+              let generatedSha;
+              let expectedParentSha;
+              let merged;
+              let releaseKind;
+
+              if (context.eventName === "pull_request") {
+                const candidate = context.payload.pull_request;
+                if (!candidate || !expectedPull(candidate)) {
+                  return;
+                }
+                pull = candidate;
+                generatedSha = candidate.head.sha;
+                expectedParentSha = candidate.base.sha;
+                releaseKind = "pr";
+              } else if (context.eventName === "push") {
+                const message = context.payload.head_commit?.message ?? "";
+                const commits = context.payload.commits ?? [];
+                if (
+                  context.ref !== "refs/heads/main" ||
+                  !message.startsWith("Version Packages") ||
+                  commits.length !== 1
+                ) {
+                  return;
+                }
+
+                const { data: pulls } =
+                  await github.rest.repos.listPullRequestsAssociatedWithCommit({
+                    owner,
+                    repo,
+                    commit_sha: context.sha,
+                  });
+                const matches = pulls.filter(
+                  (candidate) =>
+                    candidate.merged_at !== null &&
+                    candidate.merge_commit_sha === context.sha &&
+                    expectedPull(candidate),
+                );
+                if (matches.length !== 1) {
+                  core.warning(
+                    `Expected one generated Changesets PR for ${context.sha}; found ${matches.length}. Running the full CI suite.`,
+                  );
+                  return;
+                }
+
+                pull = matches[0];
+                generatedSha = pull.head.sha;
+                releaseKind = "merge";
+              } else {
+                return;
+              }
+
+              const releaseFiles = await github.paginate(
+                github.rest.pulls.listFiles,
+                {
+                  owner,
+                  repo,
+                  pull_number: pull.number,
+                  per_page: 100,
+                },
+              );
+              const unexpectedFiles = releaseFiles.filter((file) => {
+                if (
+                  file.status === "removed" &&
+                  /^\.changeset\/[^/]+\.md$/.test(file.filename)
+                ) {
+                  return false;
+                }
+                if (file.status !== "added" && file.status !== "modified") {
+                  return true;
+                }
+                return !(
+                  file.filename.endsWith("/CHANGELOG.md") ||
+                  file.filename.endsWith("/package.json") ||
+                  file.filename === "docs/bindings-status.md" ||
+                  file.filename === "docs/packages.md" ||
+                  file.filename === "packages/octane/src/version.ts" ||
+                  file.filename.startsWith("packages/shadcn/registry/") ||
+                  file.filename === "packages/cli/src/data/octane-data.json" ||
+                  file.filename ===
+                    "packages/octane-evals/datasets/train/user-apps-v1/manifest.jsonl"
+                );
+              });
+
+              if (releaseFiles.length === 0 || unexpectedFiles.length > 0) {
+                const sample = unexpectedFiles
+                  .slice(0, 5)
+                  .map((file) => file.filename)
+                  .join(", ");
+                core.warning(
+                  `Changesets PR #${pull.number} contains unexpected files${sample ? `: ${sample}` : ""}. Running the full CI suite.`,
+                );
+                return;
+              }
+
+              const { data: generated } = await github.rest.repos.getCommit({
+                owner,
+                repo,
+                ref: generatedSha,
+              });
+              const expectedReleaseCommit =
+                generated.commit.message === "Version Packages" &&
+                generated.commit.author?.email ===
+                  "41898282+github-actions[bot]@users.noreply.github.com" &&
+                generated.commit.committer?.email ===
+                  "41898282+github-actions[bot]@users.noreply.github.com";
+
+              if (!expectedReleaseCommit) {
+                core.warning(
+                  `Changesets PR #${pull.number} does not have the expected generated commit. Running the full CI suite.`,
+                );
+                return;
+              }
+
+              if (releaseKind === "pr") {
+                const basedOnCurrentMain =
+                  generated.parents.length === 1 &&
+                  generated.parents[0].sha === expectedParentSha;
+                if (!basedOnCurrentMain) {
+                  core.warning(
+                    `Changesets PR #${pull.number} is not based directly on its current main base. Running the full CI suite.`,
+                  );
+                  return;
+                }
+
+                core.setOutput("is_release", "true");
+                core.setOutput("is_release_pr", "true");
+                core.notice(
+                  `Authenticated generated Changesets PR #${pull.number}; skipping duplicate PR CI.`,
+                );
+                return;
+              }
+
+              ({ data: merged } = await github.rest.repos.getCommit({
+                owner,
+                repo,
+                ref: context.sha,
+              }));
+              const sameTree =
+                merged.commit.tree.sha === generated.commit.tree.sha;
+              const sameParent =
+                merged.parents.length === 1 &&
+                generated.parents.length === 1 &&
+                merged.parents[0].sha === generated.parents[0].sha;
+              if (!sameTree || !sameParent) {
+                core.warning(
+                  `Changesets merge ${context.sha} does not match its generated PR commit. Running the full CI suite.`,
+                );
+                return;
+              }
+
+              const parentSha = merged.parents[0].sha;
+              const { data: parentRuns } =
+                await github.rest.actions.listWorkflowRuns({
+                  owner,
+                  repo,
+                  workflow_id: "ci.yml",
+                  branch: "main",
+                  event: "push",
+                  status: "completed",
+                  head_sha: parentSha,
+                  per_page: 10,
+                });
+              const requiredTestJobs = ["test (24)"];
+              let parentPassedTests = false;
+
+              for (const run of parentRuns.workflow_runs) {
+                if (
+                  run.head_sha !== parentSha ||
+                  run.head_branch !== "main" ||
+                  run.head_repository?.full_name !== `${owner}/${repo}` ||
+                  run.event !== "push" ||
+                  typeof run.head_commit?.message !== "string" ||
+                  run.head_commit.message.startsWith("Version Packages")
+                ) {
+                  continue;
+                }
+
+                const jobs = await github.paginate(
+                  github.rest.actions.listJobsForWorkflowRun,
+                  { owner, repo, run_id: run.id, per_page: 100 },
+                );
+                const successfulJobs = new Set(
+                  jobs
+                    .filter((job) => job.conclusion === "success")
+                    .map((job) => job.name),
+                );
+                if (requiredTestJobs.every((name) => successfulJobs.has(name))) {
+                  parentPassedTests = true;
+                  break;
+                }
+              }
+
+              if (!parentPassedTests) {
+                core.warning(
+                  `The parent of Changesets merge ${context.sha} has no completed CI run with the full test suite passing. Running the full tests.`,
+                );
+                return;
+              }
+
+              core.setOutput("is_release", "true");
+              core.setOutput("is_release_merge", "true");
+            } catch (error) {
+              core.warning(
+                `Could not authenticate Changesets release ${context.sha}: ${error.message}. Running the full CI suite.`,
+              );
+            }
+
+      - name: Checkout change history
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+
+      # Keep the cheap lint/static gate universal. Expensive matrices can be
+      # omitted only when the committed classifier proves that every changed
+      # file is documentation, metadata, or an isolated developer helper.
+      - name: Classify the CI scope
+        id: change_scope
+        env:
+          BASE_SHA: e4bb4e0db7b6f36ab017d60eef29c15780f90a5c
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: >-
+          node scripts/classify-ci-change.mjs
+          --base "$BASE_SHA"
+          --head "$HEAD_SHA"
+          --github-output "$GITHUB_OUTPUT"
+
+      # A lightweight diff can inherit coverage only from a base commit that
+      # actually completed every expensive lane. This prevents a quick metadata
+      # push from cancelling an untested source push and then going green.
+      - name: Verify full-suite provenance
+        id: verify_scope
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          BASE_SHA: e4bb4e0db7b6f36ab017d60eef29c15780f90a5c
+          CANDIDATE_FULL_CI: ${{ steps.change_scope.outputs.full_ci }}
+        with:
+          script: |
+            core.setOutput("full_ci", "true");
+            if (process.env.CANDIDATE_FULL_CI !== "false") {
+              return;
+            }
+
+            try {
+              const { owner, repo } = context.repo;
+              const baseSha = process.env.BASE_SHA;
+              if (!baseSha || /^0+$/.test(baseSha)) {
+                core.warning(
+                  "The lightweight change has no comparable base commit. Running full CI.",
+                );
+                return;
+              }
+
+              const requiredFullJobs = [
+                "website integration suite",
+                "React parity checks",
+                "typecheck",
+                "validate publishable packages",
+                "heavy integration (package builds, eval corpus, runtime loaders, Astro)",
+                "heavy integration (browser - chromium)",
+                ...["1/3", "2/3", "3/3"].map(
+                  (shard) => `example apps (${shard})`,
+                ),
+                "Three compatibility",
+                "Lynx compatibility",
+                ...["1/4", "2/4", "3/4", "4/4"].map(
+                  (shard) => `test shard (Node 24, ${shard})`,
+                ),
+              ];
+              const { data: baseRuns } =
+                await github.rest.actions.listWorkflowRuns({
+                  owner,
+                  repo,
+                  workflow_id: "ci.yml",
+                  branch: "main",
+                  event: "push",
+                  status: "completed",
+                  head_sha: baseSha,
+                  per_page: 10,
+                });
+
+              for (const run of baseRuns.workflow_runs) {
+                if (
+                  run.head_sha !== baseSha ||
+                  run.head_branch !== "main" ||
+                  run.head_repository?.full_name !== `${owner}/${repo}` ||
+                  run.event !== "push" ||
+                  run.conclusion !== "success"
+                ) {
+                  continue;
+                }
+
+                const jobs = await github.paginate(
+                  github.rest.actions.listJobsForWorkflowRun,
+                  { owner, repo, run_id: run.id, per_page: 100 },
+                );
+                const successfulJobs = new Set(
+                  jobs
+                    .filter((job) => job.conclusion === "success")
+                    .map((job) => job.name),
+                );
+                const hasReusableProvenance =
+                  successfulJobs.has("CI provenance");
+                const completedFullSuite = requiredFullJobs.every((job) =>
+                  successfulJobs.has(job),
+                );
+                if (hasReusableProvenance || completedFullSuite) {
+                  core.setOutput("full_ci", "false");
+                  core.notice(
+                    `Skipping expensive CI for a lightweight change based on tested ${baseSha}.`,
+                  );
+                  return;
+                }
+              }
+
+              core.notice(
+                `Base ${baseSha} has no completed run with every expensive lane passing. Running full CI.`,
+              );
+            } catch (error) {
+              core.warning(
+                `Could not verify full-suite provenance: ${error.message}. Running full CI.`,
+              );
+            }
+
+  test_shard:
+    name: test shard (Node 24, ${{ matrix.shard }})
+    needs: release_change
+    # Each source change has already passed this matrix before Changesets
+    # generates its metadata-only release commit. Keep the post-merge CI run
+    # (publishing waits for it), but do not repeat the full suite once the merge
+    # has been authenticated above.
+    if: ${{ always() && !cancelled() && github.event.action != 'closed' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.release_change.outputs.is_release != 'true' && needs.release_change.outputs.full_ci != 'false' }}
+    runs-on: ubuntu-24.04
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # Split the large Vitest suite across four Node 24 runners. The
+        # published engine baseline remains Node 22.22.2, but duplicating the
+        # ordinary suite is not required to enforce that package metadata.
+        shard: ["1/4", "2/4", "3/4", "4/4"]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Download fixed pnpm
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: pnpm-fixed-90422c7
+          path: ${{ runner.temp }}/pnpm-fixed
+
+      - name: Activate fixed pnpm
+        shell: bash
+        run: |
+          cd "$RUNNER_TEMP/pnpm-fixed"
+          echo 'e5841d66a53f0cb19c4b13324497eccb6ef3e015081bfb0e729646a81519d450  pnpm' | sha256sum --check
+          chmod +x pnpm
+          echo "$RUNNER_TEMP/pnpm-fixed" >> "$GITHUB_PATH"
+          ./pnpm --version
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.19.0
+
+      - name: Install dependencies
+        run: pnpm install --prod=false --frozen-lockfile
+
+      # Real builds, packed consumers, browser suites, and the ordinary suite
+      # all use the repository's Node 24 CI execution target.
+      - name: Verify renderer-free behavior bundle
+        if: matrix.shard == '1/4'
+        run: node benchmarks/bundle-size/run-minimal.mjs behavior-root
+
+      - name: Verify signal-free application bundle budgets
+        if: matrix.shard == '1/4'
+        run: node benchmarks/bundle-size/run-minimal.mjs --budgets root-static-local hooks-state context
+
+      - name: Run tests
+        # WEBSITE_DOCS_SPEC is excluded through the environment, not `--exclude`:
+        # it lives in the `website-unit` project, and a project that declares its
+        # own `exclude` makes Vitest ignore the CLI flag. The flag was here and
+        # did nothing. See the `website-unit` project in vitest.config.js.
+        env:
+          OCTANE_EXCLUDE_WEBSITE_DOCS: "1"
+        run: >-
+          pnpm test
+          --config vitest.ci-sharded.config.js
+          --shard=${{ matrix.shard }}
+          --exclude "$WEBSITE_A11Y_SPEC"
+          --exclude "$WEBSITE_E2E_SPEC"
+          --exclude "$WEBSITE_SSR_SPEC"
+          --exclude "website-mcp/tests/built-handler.e2e.test.ts"
+          --exclude "packages/octane-evals/tests/user-app-corpus.test.ts"
+          --exclude "packages/rspeedy-plugin-octane/tests/packed-consumer.test.ts"
+          --exclude "packages/rspeedy-plugin-octane/tests/demo.test.ts"
+          --exclude "packages/rspeedy-plugin-octane/tests/browser/**/*.test.ts"
+          --exclude "packages/rsbuild-plugin-octane/tests/rsbuild.integration.test.ts"
+          --exclude "packages/vite-plugin-octane/tests/production.test.ts"
+          --exclude "packages/octane/tests/browser/**/*.test.ts"
+          --exclude "packages/dexie/tests/browser/**/*.test.ts"
+          --exclude "packages/input-otp/tests/browser/**/*"
+          --exclude "packages/monaco-editor/tests/browser/**/*.test.ts"
+          --exclude "packages/tiptap/tests/browser/**/*.test.ts"
+          --exclude "packages/three/tests/browser/**/*.test.ts"
+          --exclude "$ASTRO_E2E_SPEC"
+
+  react_parity_shard:
+    name: React parity shard (${{ matrix.shard }}/4)
+    needs: release_change
+    # The complete package suite is intentionally Node 24-only. Like the
+    # general shards, an authenticated release or lightweight change inherits
+    # the last successful full run through CI provenance.
+    if: ${{ always() && !cancelled() && github.event.action != 'closed' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.release_change.outputs.is_release != 'true' && needs.release_change.outputs.full_ci != 'false' }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        # Vitest hashes parity file paths across these workers. Non-Vitest
+        # manifests remain whole and use the same generic shard coordinates.
+        shard: [1, 2, 3, 4]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Download fixed pnpm
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: pnpm-fixed-90422c7
+          path: ${{ runner.temp }}/pnpm-fixed
+
+      - name: Activate fixed pnpm
+        shell: bash
+        run: |
+          cd "$RUNNER_TEMP/pnpm-fixed"
+          echo 'e5841d66a53f0cb19c4b13324497eccb6ef3e015081bfb0e729646a81519d450  pnpm' | sha256sum --check
+          chmod +x pnpm
+          echo "$RUNNER_TEMP/pnpm-fixed" >> "$GITHUB_PATH"
+          ./pnpm --version
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.19.0
+
+      - name: Install dependencies
+        run: pnpm install --prod=false --frozen-lockfile
+
+      # Browser parity lanes launch Chromium through Playwright.
+      # Keep this package-agnostic so adding a binding never patches the workflow.
+      - name: Install Playwright Chromium
+        run: |
+          bash scripts/ci-apt-https.sh
+          pnpm --filter website exec playwright install --with-deps chromium
+
+      # The manifest runner executes every required runtime and type lane. Each
+      # runner's JSON report proves the exact identities without a separate
+      # pre-execution Vitest collection pass. The aggregate below combines the
+      # file shards before proving complete lane coverage.
+      - name: Check React parity inventories and execute required lanes
+        env:
+          REACT_PARITY_VITEST_REPORT: ${{ runner.temp }}/react-parity-vitest/shard-${{ matrix.shard }}.json
+          # Retain browser-process exits and RPC disconnects when a runner stops
+          # before it can produce a complete assertion report.
+          DEBUG: pw:browser*,vitest:browser:api,vitest:browser:pool,vitest:browser:playwright
+          VITEST_PW_DEBUG: "1"
+          REACT_PARITY_BROWSER_DIAGNOSTICS: "1"
+          OCTANE_HYDRATION_SSR_TRACE: "1"
+        run: pnpm react-parity:check --shard ${{ matrix.shard }}/4
+
+      - name: Collect browser failure resource diagnostics
+        if: failure()
+        run: |
+          free -h
+          df -h /tmp /dev/shm
+          for resource in memory.events memory.current memory.peak; do
+            if [ -r "/sys/fs/cgroup/$resource" ]; then
+              printf '%s\n' "$resource"
+              cat "/sys/fs/cgroup/$resource"
+            fi
+          done
+          sudo -n dmesg --ctime | tail -100 || true
+
+      - name: Upload failed React parity diagnostics
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: react-parity-diagnostics-${{ matrix.shard }}
+          path: ${{ runner.temp }}/react-parity-vitest/shard-${{ matrix.shard }}.json.failed
+          retention-days: 1
+          overwrite: true
+
+      - name: Upload React parity Vitest shard report
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: react-parity-vitest-${{ matrix.shard }}
+          path: ${{ runner.temp }}/react-parity-vitest/shard-${{ matrix.shard }}.json
+          retention-days: 1
+
+  react_parity_checks:
+    name: React parity checks
+    needs: [release_change, react_parity_shard]
+    if: ${{ always() && !cancelled() && github.event.action != 'closed' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.release_change.outputs.is_release != 'true' && needs.release_change.outputs.full_ci != 'false' }}
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Verify all React parity shards passed
+        env:
+          REACT_PARITY_SHARD_RESULT: ${{ needs.react_parity_shard.result }}
+        run: test "$REACT_PARITY_SHARD_RESULT" = success
+
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.19.0
+
+      - name: Download React parity Vitest shard reports
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          pattern: react-parity-vitest-*
+          path: ${{ runner.temp }}/react-parity-vitest
+          merge-multiple: true
+
+      - name: Verify complete React parity Vitest coverage
+        run: >-
+          node scripts/react-parity/verify-vitest-shards.mjs
+          --reports-directory "${{ runner.temp }}/react-parity-vitest"
+          --expected-shards 4
+
+  # Keep the Node 24 aggregate check name while the work happens in parallel
+  # above. `always()` makes a failed shard produce a failed required check and
+  # folds the dedicated integration suites into the same merge and publishing
+  # gates. An authenticated release or lightweight-change skip must satisfy
+  # every prerequisite.
+  test:
+    name: test (24)
+    needs:
+      [
+        release_change,
+        test_shard,
+        react_parity_checks,
+        website_e2e,
+        heavy_integration,
+        heavy_node_integration,
+      ]
+    # The release PR does not need this test context. The post-merge release run
+    # does: publish.yml verifies this stable aggregate name before publishing.
+    if: ${{ always() && !cancelled() && github.event.action != 'closed' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.release_change.outputs.is_release_pr != 'true' }}
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Verify all test suites passed
+        env:
+          FULL_CI: ${{ needs.release_change.outputs.full_ci }}
+          IS_CHANGESET_RELEASE_MERGE: ${{ needs.release_change.outputs.is_release_merge }}
+          SHARD_RESULT: ${{ needs.test_shard.result }}
+          REACT_PARITY_RESULT: ${{ needs.react_parity_checks.result }}
+          WEBSITE_E2E_RESULT: ${{ needs.website_e2e.result }}
+          HEAVY_INTEGRATION_RESULT: ${{ needs.heavy_integration.result }}
+          HEAVY_NODE_INTEGRATION_RESULT: ${{ needs.heavy_node_integration.result }}
+        run: |
+          if [ "$IS_CHANGESET_RELEASE_MERGE" = true ] || [ "$FULL_CI" = false ]; then
+            test "$SHARD_RESULT" = skipped
+            test "$REACT_PARITY_RESULT" = skipped
+            test "$WEBSITE_E2E_RESULT" = skipped
+            test "$HEAVY_INTEGRATION_RESULT" = skipped
+            test "$HEAVY_NODE_INTEGRATION_RESULT" = skipped
+          else
+            test "$SHARD_RESULT" = success
+            test "$REACT_PARITY_RESULT" = success
+            test "$WEBSITE_E2E_RESULT" = success
+            test "$HEAVY_INTEGRATION_RESULT" = success
+            test "$HEAVY_NODE_INTEGRATION_RESULT" = success
+          fi
+
+  website_e2e:
+    name: website integration suite
+    needs: release_change
+    # Same authenticated-release skip as the shards above: a metadata-only
+    # Changesets merge has already passed this on its parent commit.
+    if: ${{ always() && !cancelled() && github.event.action != 'closed' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.release_change.outputs.is_release != 'true' && needs.release_change.outputs.full_ci != 'false' }}
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Download fixed pnpm
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: pnpm-fixed-90422c7
+          path: ${{ runner.temp }}/pnpm-fixed
+
+      - name: Activate fixed pnpm
+        shell: bash
+        run: |
+          cd "$RUNNER_TEMP/pnpm-fixed"
+          echo 'e5841d66a53f0cb19c4b13324497eccb6ef3e015081bfb0e729646a81519d450  pnpm' | sha256sum --check
+          chmod +x pnpm
+          echo "$RUNNER_TEMP/pnpm-fixed" >> "$GITHUB_PATH"
+          ./pnpm --version
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.19.0
+
+      - name: Install dependencies
+        run: pnpm install --prod=false --frozen-lockfile
+
+      - name: Install Playwright Chromium
+        run: |
+          bash scripts/ci-apt-https.sh
+          pnpm --filter website exec playwright install --with-deps chromium
+
+      # The sharded suite excludes these paths by name. If any one ever moves,
+      # fail instead of silently losing its dedicated coverage.
+      - name: Verify the excluded specs exist
+        run: |
+          test -f "$WEBSITE_A11Y_SPEC"
+          test -f "$WEBSITE_DOCS_SPEC"
+          test -f "$WEBSITE_SSR_SPEC"
+          test -f "$WEBSITE_E2E_SPEC"
+
+      - name: Run the website integration suite
+        run: >-
+          pnpm vitest run
+          "$WEBSITE_A11Y_SPEC"
+          "$WEBSITE_DOCS_SPEC"
+          "$WEBSITE_SSR_SPEC"
+          "$WEBSITE_E2E_SPEC"
+          --maxWorkers=1
+
+  heavy_node_integration:
+    name: heavy integration (package builds, eval corpus, runtime loaders, Astro)
+    needs: release_change
+    # These suites use one dependency graph on the Node 24 CI execution target.
+    # Node 22.22.2 remains the published package engine baseline.
+    if: ${{ always() && !cancelled() && github.event.action != 'closed' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.release_change.outputs.is_release != 'true' && needs.release_change.outputs.full_ci != 'false' }}
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Download fixed pnpm
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: pnpm-fixed-90422c7
+          path: ${{ runner.temp }}/pnpm-fixed
+
+      - name: Activate fixed pnpm
+        shell: bash
+        run: |
+          cd "$RUNNER_TEMP/pnpm-fixed"
+          echo 'e5841d66a53f0cb19c4b13324497eccb6ef3e015081bfb0e729646a81519d450  pnpm' | sha256sum --check
+          chmod +x pnpm
+          echo "$RUNNER_TEMP/pnpm-fixed" >> "$GITHUB_PATH"
+          ./pnpm --version
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.19.0
+
+      - name: Install dependencies
+        id: install_heavy_node_dependencies
+        run: pnpm install --prod=false --frozen-lockfile
+
+      - name: Setup Bun
+        id: setup_heavy_node_bun
+        if: ${{ !cancelled() && steps.install_heavy_node_dependencies.outcome == 'success' }}
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.3.14
+
+      - name: Install Playwright Chromium and WebKit for package and Astro coverage
+        id: install_heavy_node_chromium
+        if: ${{ !cancelled() && steps.install_heavy_node_dependencies.outcome == 'success' }}
+        run: |
+          bash scripts/ci-apt-https.sh
+          pnpm --filter website exec playwright install --with-deps chromium webkit
+
+      # Keep each former lane as a named step, and let independent suites run
+      # after a sibling failure when their own prerequisites are still valid.
+      - name: Run package-build integration tests
+        if: ${{ !cancelled() && steps.install_heavy_node_dependencies.outcome == 'success' && steps.install_heavy_node_chromium.outcome == 'success' }}
+        run: >-
+          pnpm vitest run
+          website-mcp/tests/built-handler.e2e.test.ts
+          packages/rspeedy-plugin-octane/tests/packed-consumer.test.ts
+          packages/rspeedy-plugin-octane/tests/demo.test.ts
+          packages/rspeedy-plugin-octane/tests/browser/web-host.test.ts
+          packages/rsbuild-plugin-octane/tests/rsbuild.integration.test.ts
+          packages/vite-plugin-octane/tests/production.test.ts
+          --maxWorkers=1
+
+      - name: Run eval-corpus integration tests
+        if: ${{ !cancelled() && steps.install_heavy_node_dependencies.outcome == 'success' }}
+        run: >-
+          pnpm vitest run
+          packages/octane-evals/tests/user-app-corpus.test.ts
+          --maxWorkers=1
+
+      - name: Run runtime-loader integration tests
+        if: ${{ !cancelled() && steps.install_heavy_node_dependencies.outcome == 'success' }}
+        run: >-
+          pnpm vitest run
+          packages/octane/tests/register-hook.test.ts
+          --maxWorkers=1
+
+      - name: Run Bun compiler-preload integration test
+        if: ${{ !cancelled() && steps.install_heavy_node_dependencies.outcome == 'success' && steps.setup_heavy_node_bun.outcome == 'success' }}
+        env:
+          BUN_BINARY: bun
+        run: node --test packages/octane/tests/register-hook-bun.integration.test.mjs
+
+      - name: Run OpenTUI native integration tests
+        if: ${{ !cancelled() && steps.install_heavy_node_dependencies.outcome == 'success' && steps.setup_heavy_node_bun.outcome == 'success' }}
+        run: pnpm --dir packages/opentui test:native
+
+      - name: Run Astro integration tests
+        if: ${{ !cancelled() && steps.install_heavy_node_dependencies.outcome == 'success' && steps.install_heavy_node_chromium.outcome == 'success' }}
+        run: >-
+          pnpm vitest run
+          packages/astro/tests/astro.e2e.test.ts
+          --maxWorkers=1
+
+  heavy_integration:
+    name: heavy integration (${{ matrix.lane }}${{ matrix.playwright_browser && format(' - {0}', matrix.playwright_browser) || '' }})
+    needs: release_change
+    # Run browser coverage once on the Node 24 CI execution target.
+    # Node 22.22.2 remains the published package engine baseline.
+    if: ${{ always() && !cancelled() && github.event.action != 'closed' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.release_change.outputs.is_release != 'true' && needs.release_change.outputs.full_ci != 'false' }}
+    runs-on: ubuntu-24.04
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - lane: browser
+            playwright_browser: chromium
+            specs: discovered
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Download fixed pnpm
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: pnpm-fixed-90422c7
+          path: ${{ runner.temp }}/pnpm-fixed
+
+      - name: Activate fixed pnpm
+        shell: bash
+        run: |
+          cd "$RUNNER_TEMP/pnpm-fixed"
+          echo 'e5841d66a53f0cb19c4b13324497eccb6ef3e015081bfb0e729646a81519d450  pnpm' | sha256sum --check
+          chmod +x pnpm
+          echo "$RUNNER_TEMP/pnpm-fixed" >> "$GITHUB_PATH"
+          ./pnpm --version
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.19.0
+
+      - name: Install dependencies
+        run: pnpm install --prod=false --frozen-lockfile
+
+      - name: Install selected Playwright browser
+        if: ${{ matrix.lane == 'browser' }}
+        run: |
+          bash scripts/ci-apt-https.sh
+          pnpm exec playwright install --with-deps ${{ matrix.playwright_browser }}
+
+      - name: Verify Chromium diagnostic tracing
+        run: node --test scripts/react-parity/tests/browser-diagnostics.smoke.mjs
+
+      - name: Verify browser benchmark timing boundaries
+        run: node --test benchmarks/js-framework/timing.test.mjs
+
+      - name: Run ${{ matrix.lane }} integration tests
+        run: |
+          SPECS="$(node scripts/discover-heavy-browser-specs.mjs)"
+          pnpm vitest run ${SPECS} --maxWorkers=1
+
+      # One sample exercises the canonical DOM and production-call guards.
+      # This is a deterministic work gate, not a CI timing comparison.
+      - name: Check ordinary js-framework benchmark work
+        if: ${{ matrix.lane == 'browser' && matrix.playwright_browser == 'chromium' }}
+        env:
+          BENCH_JSON: benchmarks/results/view-transitions-js-framework.json
+        run: node benchmarks/view-transitions/js-framework.mjs 1
+
+      - name: Check ordinary effect cleanup work after ViewTransition
+        if: ${{ matrix.lane == 'browser' && matrix.playwright_browser == 'chromium' }}
+        env:
+          BENCH_JSON: benchmarks/results/view-transitions-effect-cleanup.json
+        run: node benchmarks/view-transitions/effect-cleanup.mjs
+
+      - name: Upload js-framework work results
+        if: ${{ always() && matrix.lane == 'browser' && matrix.playwright_browser == 'chromium' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: js-framework-work-${{ matrix.playwright_browser }}
+          path: |
+            benchmarks/results/view-transitions-js-framework.json
+            benchmarks/results/view-transitions-effect-cleanup.json
+          if-no-files-found: ignore
+          retention-days: 1
+
+  lint_checks:
+    name: lint checks
+    needs: release_change
+    if: ${{ always() && !cancelled() && github.event.action != 'closed' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.release_change.outputs.is_release_pr != 'true' }}
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          # The production-error catalog is append-only. Its check compares the
+          # current tree with the PR base or previous main commit.
+          fetch-depth: 0
+
+      - name: Download fixed pnpm
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: pnpm-fixed-90422c7
+          path: ${{ runner.temp }}/pnpm-fixed
+
+      - name: Activate fixed pnpm
+        shell: bash
+        run: |
+          cd "$RUNNER_TEMP/pnpm-fixed"
+          echo 'e5841d66a53f0cb19c4b13324497eccb6ef3e015081bfb0e729646a81519d450  pnpm' | sha256sum --check
+          chmod +x pnpm
+          echo "$RUNNER_TEMP/pnpm-fixed" >> "$GITHUB_PATH"
+          ./pnpm --version
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.19.0
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Check formatting
+        run: pnpm format:check
+
+      # Two-layer sync check for the RuleSync-generated agent files. The root
+      # `prepare` script already re-ran `rulesync generate || true` during
+      # install, so if the committed files were stale they are now MODIFIED in
+      # the working tree, and `git diff` is what actually catches that. The
+      # explicit `rules:check` still matters for the case where prepare's
+      # rulesync invocation failed silently (it is `|| true` by design).
+      #
+      # The diff is deliberately unfiltered. An enumerated path list silently
+      # stops covering whatever RuleSync starts emitting next, which is exactly
+      # how the skill and instruction outputs escaped it. `prepare` runs nothing
+      # but rulesync, so a dirty tree here is a stale generated file.
+      - name: Check AI rule files are in sync
+        run: |
+          pnpm rules:check
+          git diff --exit-code
+
+      # All 0.x packages allow patch and minor releases; major is reserved for
+      # 1.0. Check declared bumps and the computed plan on PRs and releases.
+      - name: Validate changeset bump types
+        run: pnpm changeset:check
+
+      - name: Validate CI workflow behavior
+        run: pnpm ci:workflow:test
+
+      # A committed test must execute and pass. Intentional framework
+      # divergences are ordinary assertions; missing environment prerequisites
+      # fail with setup instructions instead of silently turning CI green.
+      - name: Disallow skipped and expected-failure tests
+        run: pnpm test:markers:check
+
+      # Packages ship their `src/` directly, so an ambient `declare module
+      # '*.tsrx'` in one reaches consumers and turns THEIR .tsrx imports into
+      # `any`. Benchmarks, playground apps, and test directories are unpublished
+      # and stay allowed.
+      - name: Disallow wildcard .tsrx declarations in published sources
+        run: pnpm tsrx-decls:check
+
+      # The type-only lowerings rewrite some constructs into a generated binding
+      # plus references to it. A position no hoisting pass reaches keeps the
+      # references and drops the declaration, so editors and tsrx-tsc report
+      # TS2304 on source that compiles and runs correctly. Packages typechecked
+      # through tsgo cannot catch this — tsgo does not read .tsrx at all.
+      - name: Disallow undeclared generated names in the virtual TSX
+        run: pnpm virtual-tsx:check
+
+      # The root rule and every skill description load on EVERY agent session.
+      # Path-scoped rules under .rulesync carry `globs` and load only when a
+      # matching file is opened, so they are deliberately not budgeted.
+      - name: Check always-loaded agent context is within budget
+        run: pnpm context:budget:check
+
+      # docs/parity-gaps.md audits executable expected-failure pins and should
+      # remain at zero under the committed-test policy above.
+      - name: Check parity-gap index is current
+        run: pnpm parity:gaps:check
+
+      # Keep metadata, generated coverage, public claims, and the parity
+      # tooling itself covered on lightweight changes. Full lane execution
+      # remains in the dedicated Node 24 job above.
+      - name: Validate React parity metadata and public claims
+        run: |
+          pnpm react-parity:test
+          pnpm react-parity:validate
+
+      # Redact's issues, pull requests, and tests are mined at a pinned commit
+      # into an authored contract ledger. This network-free gate validates its
+      # dispositions/local evidence and keeps the generated report current.
+      - name: Check Redact-derived adversarial contract ledger
+        env:
+          OCTANE_REDACT_AUDIT_BASE: e4bb4e0db7b6f36ab017d60eef29c15780f90a5c
+        run: pnpm redact-audit:check
+
+      # Production error URLs are a public compatibility surface. Keep the
+      # append-only catalog, generated client/server formatters, and literal
+      # runtime call sites synchronized before a package can be built.
+      - name: Check Octane production error catalog
+        env:
+          OCTANE_ERROR_CODES_BASE: e4bb4e0db7b6f36ab017d60eef29c15780f90a5c
+        run: pnpm error-codes:check
+
+      # Package discovery is shared by every package-wide repository check.
+      # This generated inventory catches unreviewed package additions and stale
+      # hard-coded package counts before they spread to docs and tooling.
+      - name: Check package inventory is current
+        run: pnpm packages:inventory:check
+
+      # Header and directory search consume one compact browser-safe snapshot
+      # assembled from the authored catalogs, package manifests, and statuses.
+      - name: Check website ecosystem index is current
+        run: pnpm website:ecosystem-data:check
+
+      - name: Check binding parity-gap index is current
+        run: pnpm binding-parity:gaps:check
+
+      # @octanejs/cli ships a snapshot of the binding and error-code catalogs
+      # because it runs against user projects, not this checkout. Regenerating
+      # has to happen in the same change that edits a status.json or adds an
+      # error code, or `octane bindings`/`octane explain` go stale on npm.
+      - name: Check CLI data snapshot is current
+        run: pnpm cli:data:check
+
+      # The CLI page's file trees and the create-octane README describe what
+      # `octane create` writes. The snapshot they are drawn from comes from
+      # running the command, so adding a file to a template without regenerating
+      # leaves both documents quietly describing the old project.
+      - name: Check scaffold file manifest is current
+        run: pnpm scaffold:manifest:check
+
+      # docs/bindings-status.md is generated from the per-package status.json
+      # blocks in the @octanejs/* binding packages. Changing a binding's scope
+      # means updating its status.json and regenerating in the same change.
+      - name: Check bindings-status table is current
+        run: pnpm bindings:status:check
+
+      - name: Check Lucide generated sources are current
+        run: pnpm lucide:generate:check
+
+      - name: Check Phosphor Icons generated sources are current
+        run: pnpm phosphor-icons:generate:check
+
+      # The shadcn registry is what the upstream CLI installs from, and it
+      # embeds the sibling versions its components need. Regenerating happens at
+      # `changeset:version` too, so this catches a source edit that never ran
+      # the generator.
+      - name: Check shadcn registry is current
+        run: pnpm shadcn:registry:check
+
+      # The publish build otherwise only runs at prepack, so a broken dist
+      # (an entry point missing from the build, an unresolvable relative
+      # import in dist/ or the verbatim-copied compiler/) would ship silently.
+      # build.mjs ends with verify-dist.mjs: every emitted module's imports
+      # must resolve and every publishConfig export must import in plain Node.
+      - name: Build octane package and verify dist
+        run: pnpm build
+
+  typecheck_checks:
+    name: typecheck checks
+    needs: release_change
+    if: ${{ always() && !cancelled() && github.event.action != 'closed' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.release_change.outputs.is_release_pr != 'true' && needs.release_change.outputs.full_ci != 'false' }}
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Download fixed pnpm
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: pnpm-fixed-90422c7
+          path: ${{ runner.temp }}/pnpm-fixed
+
+      - name: Activate fixed pnpm
+        shell: bash
+        run: |
+          cd "$RUNNER_TEMP/pnpm-fixed"
+          echo 'e5841d66a53f0cb19c4b13324497eccb6ef3e015081bfb0e729646a81519d450  pnpm' | sha256sum --check
+          chmod +x pnpm
+          echo "$RUNNER_TEMP/pnpm-fixed" >> "$GITHUB_PATH"
+          ./pnpm --version
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.19.0
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Type check
+        run: pnpm typecheck
+
+      - name: Validate example catalog and orchestration
+        run: pnpm examples:static:check
+
+  # `lint` and `typecheck` are protected-branch contexts. GitHub leaves a
+  # required context pending when every job with that name is skipped, so keep
+  # these reporters cheap and let the real work above remain skipped on drafts.
+  lint:
+    name: lint
+    needs: [release_change, lint_checks]
+    if: ${{ always() && !cancelled() && github.event.action != 'closed' }}
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Report lint status
+        env:
+          IS_DRAFT: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft == true }}
+          IS_RELEASE_PR: ${{ needs.release_change.outputs.is_release_pr }}
+          RELEASE_CHANGE_RESULT: ${{ needs.release_change.result }}
+          LINT_CHECKS_RESULT: ${{ needs.lint_checks.result }}
+        run: |
+          if [ "$IS_DRAFT" = true ] || [ "$IS_RELEASE_PR" = true ]; then
+            test "$LINT_CHECKS_RESULT" = skipped
+          else
+            test "$RELEASE_CHANGE_RESULT" = success
+            test "$LINT_CHECKS_RESULT" = success
+          fi
+
+  typecheck:
+    name: typecheck
+    needs: [release_change, typecheck_checks]
+    if: ${{ always() && !cancelled() && github.event.action != 'closed' }}
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Report typecheck status
+        env:
+          IS_DRAFT: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft == true }}
+          IS_RELEASE_PR: ${{ needs.release_change.outputs.is_release_pr }}
+          FULL_CI: ${{ needs.release_change.outputs.full_ci }}
+          RELEASE_CHANGE_RESULT: ${{ needs.release_change.result }}
+          TYPECHECK_CHECKS_RESULT: ${{ needs.typecheck_checks.result }}
+        run: |
+          if [ "$IS_DRAFT" = true ] || [ "$IS_RELEASE_PR" = true ] || [ "$FULL_CI" = false ]; then
+            test "$TYPECHECK_CHECKS_RESULT" = skipped
+          else
+            test "$RELEASE_CHANGE_RESULT" = success
+            test "$TYPECHECK_CHECKS_RESULT" = success
+          fi
+
+  example_shard:
+    name: example apps (${{ matrix.shard }})
+    needs: release_change
+    if: ${{ always() && !cancelled() && github.event.action != 'closed' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.release_change.outputs.is_release_pr != 'true' && needs.release_change.outputs.full_ci != 'false' }}
+    runs-on: ubuntu-24.04
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # Keep every app internally serial while spreading complete app
+        # lifecycles across runners. The planner weights declared journeys and
+        # repeated execution modes, then assigns each app to exactly one shard.
+        shard: ["1/3", "2/3", "3/3"]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Download fixed pnpm
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: pnpm-fixed-90422c7
+          path: ${{ runner.temp }}/pnpm-fixed
+
+      - name: Activate fixed pnpm
+        shell: bash
+        run: |
+          cd "$RUNNER_TEMP/pnpm-fixed"
+          echo 'e5841d66a53f0cb19c4b13324497eccb6ef3e015081bfb0e729646a81519d450  pnpm' | sha256sum --check
+          chmod +x pnpm
+          echo "$RUNNER_TEMP/pnpm-fixed" >> "$GITHUB_PATH"
+          ./pnpm --version
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.19.0
+
+      - name: Install dependencies
+        run: pnpm install --prod=false --frozen-lockfile
+
+      - name: Install Playwright Chromium
+        run: |
+          bash scripts/ci-apt-https.sh
+          pnpm --filter hacker-news-example exec playwright install --with-deps chromium
+
+      - name: Run example browser journeys
+        run: pnpm examples:e2e -- --shard=${{ matrix.shard }}
+
+  # Keep browser journeys behind their own stable aggregate check so the
+  # protected `typecheck` context can finish as soon as typechecking does.
+  # `always()` makes a failed shard produce a failed example check, not a skip.
+  examples:
+    name: examples
+    needs: [release_change, example_shard]
+    if: ${{ always() && !cancelled() && github.event.action != 'closed' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.release_change.outputs.is_release_pr != 'true' }}
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Verify all example shards passed
+        env:
+          FULL_CI: ${{ needs.release_change.outputs.full_ci }}
+          EXAMPLE_SHARD_RESULT: ${{ needs.example_shard.result }}
+        run: |
+          if [ "$FULL_CI" = false ]; then
+            test "$EXAMPLE_SHARD_RESULT" = skipped
+          else
+            test "$EXAMPLE_SHARD_RESULT" = success
+          fi
+
+  three_compat:
+    name: Three compatibility
+    needs: release_change
+    if: ${{ always() && !cancelled() && github.event.action != 'closed' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.release_change.outputs.is_release_pr != 'true' && needs.release_change.outputs.full_ci != 'false' }}
+    runs-on: ubuntu-24.04
+    # Each lane rewrites one importer without changing the repository lockfile
+    # after its frozen base install. Distinct worktrees keep manifests,
+    # node_modules, and test artifacts isolated while sharing one runner and
+    # pnpm's content-addressed store.
+    env:
+      PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN: "false"
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Download fixed pnpm
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: pnpm-fixed-90422c7
+          path: ${{ runner.temp }}/pnpm-fixed
+
+      - name: Activate fixed pnpm
+        shell: bash
+        run: |
+          cd "$RUNNER_TEMP/pnpm-fixed"
+          echo 'e5841d66a53f0cb19c4b13324497eccb6ef3e015081bfb0e729646a81519d450  pnpm' | sha256sum --check
+          chmod +x pnpm
+          echo "$RUNNER_TEMP/pnpm-fixed" >> "$GITHUB_PATH"
+          ./pnpm --version
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.19.0
+
+      - name: Prepare isolated Three compatibility worktrees
+        id: prepare_three_compat
+        run: |
+          THREE_MINIMUM_WORKSPACE="$RUNNER_TEMP/octane-three-compat-minimum-r156"
+          THREE_CURRENT_WORKSPACE="$RUNNER_TEMP/octane-three-compat-current"
+          git worktree add --detach "$THREE_MINIMUM_WORKSPACE" "$GITHUB_SHA"
+          git worktree add --detach "$THREE_CURRENT_WORKSPACE" "$GITHUB_SHA"
+          test "$(git -C "$THREE_MINIMUM_WORKSPACE" rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git -C "$THREE_CURRENT_WORKSPACE" rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git -C "$THREE_MINIMUM_WORKSPACE" rev-parse --git-dir)" != "$(git -C "$THREE_CURRENT_WORKSPACE" rev-parse --git-dir)"
+
+      # Keep the r172 differential oracle immutable. The minimum lane uses its
+      # matching runtime/type pair; the current lane checks the newest published
+      # matching pair and tests the latest runtime even when its types lag.
+      # Both select the Octane-owned compatibility suite.
+      - name: Test Three compatibility (minimum r156)
+        working-directory: ${{ runner.temp }}/octane-three-compat-minimum-r156
+        env:
+          THREE_VERSION_SPEC: 0.156.0
+        run: |
+          pnpm install --frozen-lockfile
+          THREE_VERSION="$(pnpm view "three@$THREE_VERSION_SPEC" version)"
+          THREE_RELEASE_LINE="${THREE_VERSION%.*}"
+          pnpm --filter @octanejs/three add --save-dev --lockfile=false "three@$THREE_VERSION" "@types/three@${THREE_RELEASE_LINE}.x"
+          RESOLVED_THREE_VERSION="$(node -e "process.stdout.write(require('./packages/three/node_modules/three/package.json').version)")"
+          TYPES_VERSION="$(node -e "process.stdout.write(require('./packages/three/node_modules/@types/three/package.json').version)")"
+          TYPES_RELEASE_LINE="${TYPES_VERSION%.*}"
+          echo "three=$RESOLVED_THREE_VERSION @types/three=$TYPES_VERSION"
+          test "$RESOLVED_THREE_VERSION" = "$THREE_VERSION"
+          test "$THREE_RELEASE_LINE" = "$TYPES_RELEASE_LINE"
+          pnpm exec tsgo --noEmit -p packages/three/tsconfig.json
+          pnpm exec tsc --noEmit -p packages/three/typetests/tsconfig.json
+          OCTANE_THREE_COMPAT_VERSION="$THREE_VERSION" pnpm --dir packages/three test:compat
+
+      # Preserve the matrix's fail-fast: false behavior: a minimum-lane failure
+      # must not hide whether the current release is compatible.
+      - name: Test Three compatibility (current)
+        if: ${{ !cancelled() && steps.prepare_three_compat.outcome == 'success' }}
+        working-directory: ${{ runner.temp }}/octane-three-compat-current
+        env:
+          THREE_VERSION_SPEC: latest
+        run: |
+          pnpm install --frozen-lockfile
+          THREE_VERSION="$(pnpm view "three@$THREE_VERSION_SPEC" version)"
+          TYPES_VERSION="$(pnpm view @types/three@latest version)"
+          TYPES_RELEASE_LINE="${TYPES_VERSION%.*}"
+          pnpm --filter @octanejs/three add --save-dev --lockfile=false "three@${TYPES_RELEASE_LINE}.x" "@types/three@$TYPES_VERSION"
+          TYPED_THREE_VERSION="$(node -e "process.stdout.write(require('./packages/three/node_modules/three/package.json').version)")"
+          RESOLVED_TYPES_VERSION="$(node -e "process.stdout.write(require('./packages/three/node_modules/@types/three/package.json').version)")"
+          echo "typed pair: three=$TYPED_THREE_VERSION @types/three=$RESOLVED_TYPES_VERSION"
+          test "${TYPED_THREE_VERSION%.*}" = "$TYPES_RELEASE_LINE"
+          test "$RESOLVED_TYPES_VERSION" = "$TYPES_VERSION"
+          pnpm exec tsgo --noEmit -p packages/three/tsconfig.json
+          pnpm exec tsc --noEmit -p packages/three/typetests/tsconfig.json
+          OCTANE_THREE_COMPAT_VERSION="$TYPED_THREE_VERSION" pnpm --dir packages/three test:compat
+
+          pnpm --filter @octanejs/three add --save-dev --lockfile=false "three@$THREE_VERSION"
+          RESOLVED_THREE_VERSION="$(node -e "process.stdout.write(require('./packages/three/node_modules/three/package.json').version)")"
+          RESOLVED_TYPES_VERSION="$(node -e "process.stdout.write(require('./packages/three/node_modules/@types/three/package.json').version)")"
+          echo "latest runtime: three=$RESOLVED_THREE_VERSION @types/three=$RESOLVED_TYPES_VERSION"
+          test "$RESOLVED_THREE_VERSION" = "$THREE_VERSION"
+          test "$RESOLVED_TYPES_VERSION" = "$TYPES_VERSION"
+          OCTANE_THREE_COMPAT_VERSION="$THREE_VERSION" pnpm --dir packages/three test:compat
+
+  lynx_compat:
+    name: Lynx compatibility
+    needs: release_change
+    if: ${{ always() && !cancelled() && github.event.action != 'closed' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.release_change.outputs.is_release_pr != 'true' && needs.release_change.outputs.full_ci != 'false' }}
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Download fixed pnpm
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: pnpm-fixed-90422c7
+          path: ${{ runner.temp }}/pnpm-fixed
+
+      - name: Activate fixed pnpm
+        shell: bash
+        run: |
+          cd "$RUNNER_TEMP/pnpm-fixed"
+          echo 'e5841d66a53f0cb19c4b13324497eccb6ef3e015081bfb0e729646a81519d450  pnpm' | sha256sum --check
+          chmod +x pnpm
+          echo "$RUNNER_TEMP/pnpm-fixed" >> "$GITHUB_PATH"
+          ./pnpm --version
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.19.0
+
+      - name: Install pinned repository dependencies
+        id: install_lynx_dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Each step is a separate Node process because Rspack and TASM load native
+      # state. The script also gives each lane a distinct temporary external
+      # consumer for its exact dependency graph and two clean native builds.
+      - name: Pack and build Lynx minimum compatibility graph
+        run: >-
+          node packages/rspeedy-plugin-octane/scripts/compatibility-smoke.mjs
+          --lane minimum
+
+      # Preserve the matrix's fail-fast: false behavior so a minimum-lane
+      # failure does not hide whether the current graph is compatible.
+      - name: Pack and build Lynx current compatibility graph
+        if: ${{ !cancelled() && steps.install_lynx_dependencies.outcome == 'success' }}
+        run: >-
+          node packages/rspeedy-plugin-octane/scripts/compatibility-smoke.mjs
+          --lane current
+
+      - name: Verify the repository lockfile stayed immutable
+        run: git diff --exit-code -- pnpm-lock.yaml
+
+  package:
+    name: validate publishable packages
+    needs: release_change
+    if: ${{ always() && !cancelled() && github.event.action != 'closed' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.release_change.outputs.is_release_pr != 'true' && needs.release_change.outputs.full_ci != 'false' }}
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Download fixed pnpm
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: pnpm-fixed-90422c7
+          path: ${{ runner.temp }}/pnpm-fixed
+
+      - name: Activate fixed pnpm
+        shell: bash
+        run: |
+          cd "$RUNNER_TEMP/pnpm-fixed"
+          echo 'e5841d66a53f0cb19c4b13324497eccb6ef3e015081bfb0e729646a81519d450  pnpm' | sha256sum --check
+          chmod +x pnpm
+          echo "$RUNNER_TEMP/pnpm-fixed" >> "$GITHUB_PATH"
+          ./pnpm --version
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.19.0
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # The privileged publish workflow uses this network-free contract to
+      # classify registry state before Changesets is allowed to publish.
+      - name: Test npm release reconciliation
+        run: pnpm release:preflight:test
+
+      # Pack the live, discovered package set instead of a hand-maintained
+      # allowlist. The validator checks the post-pnpm manifest and tar contents,
+      # including exports/bin/types and workspace/catalog protocol replacement,
+      # then installs packed core + binding tarballs into an isolated consumer
+      # to prove singleton resolution and client/server raw-source compilation.
+      - name: Pack and validate every publishable package
+        run: pnpm packages:pack:check
+
+  # This stable marker lets consecutive lightweight commits inherit the last
+  # full suite transitively. A lightweight run reaches it only after the scope
+  # classifier verifies that its base already had equivalent provenance.
+  provenance:
+    name: CI provenance
+    needs: [release_change, test, lint, typecheck, examples, three_compat, lynx_compat, package]
+    if: ${{ always() && !cancelled() && github.event.action != 'closed' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.release_change.outputs.is_release_pr != 'true' }}
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Verify reusable CI coverage
+        env:
+          FULL_CI: ${{ needs.release_change.outputs.full_ci }}
+          RELEASE_CHANGE_RESULT: ${{ needs.release_change.result }}
+          TEST_RESULT: ${{ needs.test.result }}
+          LINT_RESULT: ${{ needs.lint.result }}
+          TYPECHECK_RESULT: ${{ needs.typecheck.result }}
+          EXAMPLES_RESULT: ${{ needs.examples.result }}
+          THREE_COMPAT_RESULT: ${{ needs.three_compat.result }}
+          LYNX_COMPAT_RESULT: ${{ needs.lynx_compat.result }}
+          PACKAGE_RESULT: ${{ needs.package.result }}
+        run: |
+          test "$RELEASE_CHANGE_RESULT" = success
+          test "$TEST_RESULT" = success
+          test "$LINT_RESULT" = success
+          test "$TYPECHECK_RESULT" = success
+          test "$EXAMPLES_RESULT" = success
+
+          if [ "$FULL_CI" = false ]; then
+            test "$THREE_COMPAT_RESULT" = skipped
+            test "$LYNX_COMPAT_RESULT" = skipped
+            test "$PACKAGE_RESULT" = skipped
+          else
+            test "$TYPECHECK_RESULT" = success
+            test "$THREE_COMPAT_RESULT" = success
+            test "$LYNX_COMPAT_RESULT" = success
+            test "$PACKAGE_RESULT" = success
+          fi
+
+  performance:
+    name: Compare pnpm 11 and fixed 12 on one runner
+    needs: prepare_pnpm
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Checkout fixed project inputs
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.19.0
+      - name: Download fixed pnpm
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: pnpm-fixed-90422c7
+          path: ${{ runner.temp }}/pnpm-fixed
+
+      - name: Activate fixed pnpm
+        shell: bash
+        run: |
+          cd "$RUNNER_TEMP/pnpm-fixed"
+          echo 'e5841d66a53f0cb19c4b13324497eccb6ef3e015081bfb0e729646a81519d450  pnpm' | sha256sum --check
+          chmod +x pnpm
+          echo "$RUNNER_TEMP/pnpm-fixed" >> "$GITHUB_PATH"
+          ./pnpm --version
+
+      - name: Prepare matched comparison
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/comparison/experiment"
+          git worktree add --detach "$RUNNER_TEMP/comparison/octane" "$GITHUB_SHA"
+          cp scripts/pnpm-fixed-performance/run.py scripts/pnpm-fixed-performance/README.md "$RUNNER_TEMP/comparison/experiment/"
+          npm install --prefix "$RUNNER_TEMP/comparison/experiment/tools/pnpm11" --ignore-scripts --no-audit --no-fund pnpm@11.15.1
+          echo "PNPM_BENCH_11=$RUNNER_TEMP/comparison/experiment/tools/pnpm11/node_modules/.bin/pnpm" >> "$GITHUB_ENV"
+          echo "PNPM_BENCH_12=$RUNNER_TEMP/pnpm-fixed/pnpm" >> "$GITHUB_ENV"
+          uname -a > "$RUNNER_TEMP/comparison/experiment/runner.txt"
+          lscpu >> "$RUNNER_TEMP/comparison/experiment/runner.txt"
+      - name: Verify strict local tarball peer behavior
+        run: python3 scripts/pnpm-fixed-performance/peer-repro.py "$RUNNER_TEMP/comparison/experiment/peer-repro"
+      - name: Cold install observations
+        run: python3 "$RUNNER_TEMP/comparison/experiment/run.py" cold
+      - name: Install browser outside timing
+        working-directory: ${{ runner.temp }}/comparison/octane
+        run: pnpm --dir examples/draftboard exec playwright install --with-deps chromium
+      - name: Warm install and developer measurements
+        run: python3 "$RUNNER_TEMP/comparison/experiment/run.py" warm developer summary
+      - name: Upload raw measurements
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: pnpm-fixed-performance-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/comparison/experiment/*.json
+            ${{ runner.temp }}/comparison/experiment/*.jsonl
+            ${{ runner.temp }}/comparison/experiment/*.txt
+            ${{ runner.temp }}/comparison/experiment/*.md
+            ${{ runner.temp }}/comparison/experiment/*.py
+            ${{ runner.temp }}/comparison/experiment/logs
+            ${{ runner.temp }}/comparison/experiment/peer-repro
+          retention-days: 30
