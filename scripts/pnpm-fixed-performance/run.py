@@ -12,7 +12,7 @@ BINARIES = {v: os.path.abspath(os.environ['PNPM_BENCH_' + v]) for v in VERSIONS}
 ORIGINAL = (ROOT / 'package.json').read_text()
 LOCK = hashlib.sha256((ROOT / 'pnpm-lock.yaml').read_bytes()).hexdigest()
 ENV = os.environ.copy()
-ENV.update({'CI': 'true', 'NO_COLOR': '1', 'PNPM_DISABLE_SELF_UPDATE_CHECK': '1'})
+ENV.update({'CI': 'true', 'NO_COLOR': '1', 'PNPM_DISABLE_SELF_UPDATE_CHECK': '1', 'PLAYWRIGHT_BROWSERS_PATH': str(BASE / 'browsers')})
 (BASE / 'logs').mkdir(exist_ok=True)
 
 

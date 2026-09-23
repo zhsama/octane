@@ -1528,6 +1528,8 @@ jobs:
       - name: Cold install observations
         run: python3 "$RUNNER_TEMP/comparison/experiment/run.py" cold
       - name: Install browser outside timing
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/comparison/experiment/browsers
         working-directory: ${{ runner.temp }}/comparison/octane
         run: pnpm --dir examples/draftboard exec playwright install --with-deps chromium
       - name: Warm install and developer measurements
